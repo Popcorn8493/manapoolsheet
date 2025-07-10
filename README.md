@@ -8,7 +8,6 @@ This script connects to the ManaPool and Scryfall APIs to retrieve unshipped ord
 
   - Fetches order data using the ManaPool API.
   - Automatically filters out already shipped orders to create a picklist of pending items.
-  - Enriches line items with card images from the Scryfall API for easy identification.
   - Consolidates all items from all unshipped orders into a single CSV file.
   - Logs all operations and errors to a local file for troubleshooting.
   - Exports a detailed CSV with columns for order ID, quantity, name, set, condition, price, and image URL.
