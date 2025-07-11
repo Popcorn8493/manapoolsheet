@@ -20,15 +20,15 @@ Python 3
 
 ## Setup and Usage
 
-**Provide Credentials**: In the same directory as the script, create two new files:
+**Provide Credentials**: In the same directory as the script, create two new files, using your api key from https://manapool.com/seller/integrations/manapool-api : 
 
       - `email.txt`: Add your ManaPool account email to this file.
-      - `api-key.txt`: Add your ManaPool API token to this file, generated from https://manapool.com/seller/integrations/manapool-api
+      - `api-key.txt`: Add your ManaPool API token to this file
 
 **Run the Script**: Open your terminal or command prompt, navigate to the script's directory, and run the following command:
 
-    ```bash
+    
     python manapoolsheet.py
-    ```
+   
 
 When finished, you will find the `fulfillment_list.csv` and `order_retrieval_log.txt` files in the same directory.
