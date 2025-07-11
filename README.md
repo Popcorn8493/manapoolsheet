@@ -22,7 +22,7 @@ Python 3
 
 **Provide Credentials**: In the same directory as the script, create two new files, using your api key from https://manapool.com/seller/integrations/manapool-api 
 
-      - email.txt: Add your ManaPool account email to this file.
+      - email.txt: Add your ManaPool account email to this file
       - api-key.txt: Add your ManaPool API token to this file
 
 **Run the Script**: Open your terminal or command prompt, navigate to the script's directory, and run the following command:
