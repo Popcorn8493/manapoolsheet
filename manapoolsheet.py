@@ -8,7 +8,8 @@ from typing import Any, Dict, List, Optional
 # Configuration
 
 LOG_FILE = "order_retrieval_log.txt"
-OUTPUT_CSV_FILE = "fulfillment_list.csv"
+# The output CSV filename will now be generated dynamically based on the filter.
+BASE_OUTPUT_CSV_NAME = "fulfillment_list"
 EMAIL_FILE = "email.txt"  # ManaPool user email
 API_KEY_FILE = "api-key.txt"  # ManaPool API token
 
@@ -71,7 +72,20 @@ def get_order_details(order_id: str,
         return None
 
 
-# Main
+def get_user_filter_choice() -> str:
+    """Prompt the user to select an order filter and return their choice."""
+    print("\n" + "=" * 40)
+    print("  ManaPool Order Retrieval")
+    print("=" * 40)
+    while True:
+        print("\nPlease select which orders to retrieve:")
+        print("  1: Not Shipped (Default)")
+        print("  2: Shipped Only")
+        print("  3: All Orders")
+        choice = input("Enter your choice (1-3): ").strip()
+        if choice in ["1", "2", "3"]:
+            return choice
+        print("\nInvalid choice. Please enter 1, 2, or 3.")
 
 
 def main() -> None:
@@ -83,6 +97,9 @@ def main() -> None:
         filemode="w",
     )
     logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
+
+    # --- Get User Input ---
+    filter_choice = get_user_filter_choice()
 
     # Credentials
     email = read_credential_from_file(EMAIL_FILE)
@@ -96,7 +113,7 @@ def main() -> None:
         "X-ManaPool-Access-Token": token,
     }
 
-    logging.info("Fetching orders from ManaPool…")
+    logging.info("Fetching all orders from ManaPool…")
     try:
         resp = requests.get(f"{MANAPOOL_API_BASE_URL}/seller/orders",
                             headers=headers,
@@ -112,24 +129,38 @@ def main() -> None:
         logging.error(f"Error parsing API response: {exc}")
         return
 
-    logging.info(f"Total orders returned: {len(orders_list)}")
+    logging.info(f"Total orders returned from API: {len(orders_list)}")
 
-    unfulfilled_orders = [
-        o for o in orders_list if o.get(FULFILLMENT_FIELD) != SHIPPED_VALUE
-    ]
-    logging.info(
-        f"Unfulfilled orders remaining after filter: {len(unfulfilled_orders)}"
-    )
-    if not unfulfilled_orders:
-        logging.info("Nothing to fulfill — exiting.")
+    # --- Filter Orders Based on User Choice ---
+    if filter_choice == "1":
+        filtered_orders = [o for o in orders_list if o.get(FULFILLMENT_FIELD) != SHIPPED_VALUE]
+        filter_description = "Not Shipped"
+        output_filename = f"{BASE_OUTPUT_CSV_NAME}_not_shipped.csv"
+    elif filter_choice == "2":
+        filtered_orders = [o for o in orders_list if o.get(FULFILLMENT_FIELD) == SHIPPED_VALUE]
+        filter_description = "Shipped"
+        output_filename = f"{BASE_OUTPUT_CSV_NAME}_shipped.csv"
+    else:  # choice == "3"
+        filtered_orders = orders_list
+        filter_description = "All"
+        output_filename = f"{BASE_OUTPUT_CSV_NAME}_all.csv"
+
+    logging.info(f"Filtering for '{filter_description}' orders. Found {len(filtered_orders)} matching orders.")
+
+    if not filtered_orders:
+        logging.info("No orders match the selected filter — exiting.")
         return
 
     items: List[Dict[str, Any]] = []
-    for summary in unfulfilled_orders:
+    total_to_process = len(filtered_orders)
+    logging.info(f"Fetching details for {total_to_process} orders...")
+
+    for i, summary in enumerate(filtered_orders):
         order_id = summary.get("id")
         if not order_id:
             continue
 
+        logging.info(f"Processing order {i+1}/{total_to_process} (ID: {order_id})")
         details = get_order_details(order_id, headers)
         if not details:
             continue
@@ -160,15 +191,15 @@ def main() -> None:
             })
 
     if not items:
-        logging.info("No line items found — nothing exported.")
+        logging.info("No line items found in the processed orders — nothing exported.")
         return
 
     df = pd.DataFrame(items)
     try:
-        df.to_csv(OUTPUT_CSV_FILE, index=False)
-        logging.info(f"Exported {len(items)} items to {OUTPUT_CSV_FILE}")
+        df.to_csv(output_filename, index=False)
+        logging.info(f"Successfully exported {len(items)} items to {output_filename}")
     except Exception as exc:
-        logging.error(f"Failed to write CSV: {exc}")
+        logging.error(f"Failed to write CSV file: {exc}")
 
     logging.info("Order‑retrieval process complete.")
 
