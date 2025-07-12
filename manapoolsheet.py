@@ -1,40 +1,53 @@
 import sys
+import os
+import json
 import requests
 import logging
 import pandas as pd
 import time
 from typing import Any, Dict, List, Optional
+from dotenv import load_dotenv
 
-# Configuration
+# --- Configuration ---
+
+# Load environment variables from a .env file
+load_dotenv()
 
 LOG_FILE = "order_retrieval_log.txt"
-# The output CSV filename will now be generated dynamically based on the filter.
 BASE_OUTPUT_CSV_NAME = "fulfillment_list"
-EMAIL_FILE = "email.txt"  # ManaPool user email
-API_KEY_FILE = "api-key.txt"  # ManaPool API token
+LOCATIONS_FILE = "locations.json"  # File to map set codes to physical locations
 
+# API and Header Configuration
 MANAPOOL_API_BASE_URL = "https://manapool.com/api/v1"
 SCRYFALL_API_BASE_URL = "https://api.scryfall.com"
-
 FULFILLMENT_FIELD = "latest_fulfillment_status"
-SHIPPED_VALUE = "shipped"  # Skip orders with this value
+SHIPPED_VALUE = "shipped"
+
+# --- Helper Functions ---
 
 
-def read_credential_from_file(filename: str) -> Optional[str]:
-    """Read and return the first line of *filename*, stripped of whitespace."""
+def load_set_locations(filename: str) -> Dict[str, str]:
+    """Loads the set-to-location mapping from a JSON file."""
     try:
-        with open(filename, "r", encoding="utf-8") as fh:
-            return fh.read().strip()
+        with open(filename, "r", encoding="utf-8") as f:
+            locations = json.load(f)
+            # Ensure all keys (set codes) are uppercase for consistent matching
+            return {k.upper(): v for k, v in locations.items()}
     except FileNotFoundError:
-        logging.error(
-            f"Credential file not found: {filename} — create it in the script directory."
+        logging.warning(
+            f"Location file not found: {filename}. Location data will be missing."
         )
-        return None
+        return {}
+    except json.JSONDecodeError:
+        logging.error(
+            f"Could not parse {filename}. Please ensure it is valid JSON.")
+        return {}
 
 
 def get_scryfall_image_uri(card_name: str, set_code: str,
                            collector_number: str) -> str:
-    """Return a normal‑sized image URL from Scryfall (or 'N/A' if not found)."""
+    """Return a normal-sized image URL from Scryfall (or 'N/A' if not found)."""
+    # Scryfall API requests a 50-100ms delay between requests
     time.sleep(0.1)
 
     # First try exact set / collector lookup
@@ -44,7 +57,7 @@ def get_scryfall_image_uri(card_name: str, set_code: str,
         r.raise_for_status()
         return r.json().get("image_uris", {}).get("normal", "N/A")
     except requests.exceptions.RequestException:
-        pass
+        pass  # Fallback to fuzzy search
 
     # Fallback: fuzzy name search
     try:
@@ -82,30 +95,37 @@ def get_user_filter_choice() -> str:
         print("  1: Not Shipped (Default)")
         print("  2: Shipped Only")
         print("  3: All Orders")
-        choice = input("Enter your choice (1-3): ").strip()
+        choice = input("Enter your choice (1-3): ").strip() or "1"
         if choice in ["1", "2", "3"]:
             return choice
         print("\nInvalid choice. Please enter 1, 2, or 3.")
 
 
 def main() -> None:
-    # Logging setup
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        filename=LOG_FILE,
-        filemode="w",
-    )
-    logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
+    # --- Logging Setup ---
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s - %(levelname)s - %(message)s",
+                        handlers=[
+                            logging.FileHandler(LOG_FILE, mode='w'),
+                            logging.StreamHandler(sys.stdout)
+                        ])
 
-    # --- Get User Input ---
+    # --- Get User Input and Load Data ---
     filter_choice = get_user_filter_choice()
+    set_locations = load_set_locations(LOCATIONS_FILE)
+    if set_locations:
+        logging.info(
+            f"Successfully loaded {len(set_locations)} set locations.")
 
-    # Credentials
-    email = read_credential_from_file(EMAIL_FILE)
-    token = read_credential_from_file(API_KEY_FILE)
+    # --- Credentials ---
+    # Read credentials securely from environment variables
+    email = os.getenv("MANAPOOL_EMAIL")
+    token = os.getenv("MANAPOOL_API_KEY")
+
     if not email or not token:
-        logging.error("Missing credentials — aborting.")
+        logging.error(
+            "MANAPOOL_EMAIL or MANAPOOL_API_KEY not found in .env file.")
+        logging.error("Please create a .env file and add your credentials.")
         return
 
     headers = {
@@ -113,6 +133,7 @@ def main() -> None:
         "X-ManaPool-Access-Token": token,
     }
 
+    # --- Fetch All Orders ---
     logging.info("Fetching all orders from ManaPool…")
     try:
         resp = requests.get(f"{MANAPOOL_API_BASE_URL}/seller/orders",
@@ -124,6 +145,8 @@ def main() -> None:
             str, Any]] = data.get("data") or data.get("orders") or data
     except requests.exceptions.RequestException as exc:
         logging.error(f"API communication error: {exc}")
+        if exc.response is not None:
+            logging.error(f"Response content: {exc.response.text}")
         return
     except (ValueError, KeyError) as exc:
         logging.error(f"Error parsing API response: {exc}")
@@ -133,11 +156,15 @@ def main() -> None:
 
     # --- Filter Orders Based on User Choice ---
     if filter_choice == "1":
-        filtered_orders = [o for o in orders_list if o.get(FULFILLMENT_FIELD) != SHIPPED_VALUE]
+        filtered_orders = [
+            o for o in orders_list if o.get(FULFILLMENT_FIELD) != SHIPPED_VALUE
+        ]
         filter_description = "Not Shipped"
         output_filename = f"{BASE_OUTPUT_CSV_NAME}_not_shipped.csv"
     elif filter_choice == "2":
-        filtered_orders = [o for o in orders_list if o.get(FULFILLMENT_FIELD) == SHIPPED_VALUE]
+        filtered_orders = [
+            o for o in orders_list if o.get(FULFILLMENT_FIELD) == SHIPPED_VALUE
+        ]
         filter_description = "Shipped"
         output_filename = f"{BASE_OUTPUT_CSV_NAME}_shipped.csv"
     else:  # choice == "3"
@@ -145,12 +172,15 @@ def main() -> None:
         filter_description = "All"
         output_filename = f"{BASE_OUTPUT_CSV_NAME}_all.csv"
 
-    logging.info(f"Filtering for '{filter_description}' orders. Found {len(filtered_orders)} matching orders.")
+    logging.info(
+        f"Filtering for '{filter_description}' orders. Found {len(filtered_orders)} matching orders."
+    )
 
     if not filtered_orders:
         logging.info("No orders match the selected filter — exiting.")
         return
 
+    # --- Process Orders and Line Items ---
     items: List[Dict[str, Any]] = []
     total_to_process = len(filtered_orders)
     logging.info(f"Fetching details for {total_to_process} orders...")
@@ -160,7 +190,8 @@ def main() -> None:
         if not order_id:
             continue
 
-        logging.info(f"Processing order {i+1}/{total_to_process} (ID: {order_id})")
+        logging.info(
+            f"Processing order {i+1}/{total_to_process} (ID: {order_id})")
         details = get_order_details(order_id, headers)
         if not details:
             continue
@@ -173,12 +204,16 @@ def main() -> None:
             set_code = single.get("set", "N/A")
             collector_number = single.get("number", "N/A")
 
+            # Get location from our map, defaulting to "Unassigned"
+            location = set_locations.get(set_code.upper(), "Unassigned")
+
             image_uri = get_scryfall_image_uri(card_name, set_code,
                                                collector_number)
 
             items.append({
                 "order_id": order_id,
                 "order_label": details.get("label", "N/A"),
+                "location": location,  # Added location column
                 "quantity": item.get("quantity", 0),
                 "name": card_name,
                 "set": set_code,
@@ -191,17 +226,28 @@ def main() -> None:
             })
 
     if not items:
-        logging.info("No line items found in the processed orders — nothing exported.")
+        logging.info(
+            "No line items found in the processed orders — nothing exported.")
         return
 
+    # --- Export to CSV ---
     df = pd.DataFrame(items)
+    # Reorder columns to have location near the front
+    cols = [
+        'order_id', 'order_label', 'location', 'quantity', 'name', 'set',
+        'number', 'condition', 'finish', 'price', 'tcgplayer_sku',
+        'scryfall_image_uri'
+    ]
+    df = df[cols]
+
     try:
         df.to_csv(output_filename, index=False)
-        logging.info(f"Successfully exported {len(items)} items to {output_filename}")
+        logging.info(
+            f"Successfully exported {len(items)} items to {output_filename}")
     except Exception as exc:
         logging.error(f"Failed to write CSV file: {exc}")
 
-    logging.info("Order‑retrieval process complete.")
+    logging.info("Order retrieval process complete.")
 
 
 if __name__ == "__main__":
