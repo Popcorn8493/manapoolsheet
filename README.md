@@ -41,12 +41,12 @@ This script connects to the ManaPool and Scryfall APIs to retrieve orders, colle
 
 ### Configuration
 
-1. **API Credentials**: Create a `.env` file in the project root:
+1. **API Credentials**: Create a `.env` file in the project root, and replace the example with your personal API details
    ```
    MANAPOOL_EMAIL="your_email@example.com"
    MANAPOOL_API_KEY="your_manapool_api_key"
    ```
-   Get your API key from: https://manapool.com/seller/integrations/manapool-api
+   Get your API key and API email from: https://manapool.com/seller/integrations/manapool-api
 
 2. **Location Mapping** (Optional): The script will automatically create a `locations.json` file as you assign locations to new sets. You can also pre-create this file if desired:
    ```json
