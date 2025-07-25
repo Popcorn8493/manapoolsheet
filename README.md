@@ -1,99 +1,179 @@
 # ManaPool Order Retriever
 
-A Python tool for sellers to automate the creation of a fulfillment list from their ManaPool account.
+A Python tool for ManaPool sellers to automate the creation of fulfillment lists from their ManaPool account.
 
 This script connects to the ManaPool and Scryfall APIs to retrieve orders, collect detailed data for each item, and enrich it with card images and physical storage locations. The primary goal is to create a consolidated CSV file that can be used for efficient picking and shipping of orders.
 
 ## Features
 
--   Fetches all or filtered (shipped/unshipped) orders from the ManaPool API.
--   For each item in an order, it retrieves detailed card information.
--   Retrieves card image URLs from the Scryfall API.
--   Maps card sets to user-defined physical locations (e.g., "Shelf 1", "Box A").
--   Securely handles API credentials using a `.env` file.
--   Exports a detailed fulfillment list to a CSV file.
--   Logs all operations to a `order_retrieval_log.txt` file.
+- **Order Management**: Fetches all or filtered (shipped/unshipped) orders from the ManaPool API
+- **Detailed Card Information**: Retrieves comprehensive card data for each item in orders
+- **Interactive HTML Reports**: Visual reports with dual view modes for picking and packing
+- **Smart Location Mapping**: Maps card sets to user-defined physical locations with interactive setup
+- **Image Support**: Optional local image downloads with intelligent caching
+- **High-Value Card Alerts**: Identifies and highlights cards worth $10+ that may need special handling
+- **Progress Tracking**: Interactive checkboxes to track fulfillment progress
+- **User Preferences**: Saves settings for streamlined repeated use
+- **Secure Credential Management**: Uses .env file for API credentials
+- **Comprehensive Logging**: Logs all operations for troubleshooting
 
-## Setup
+## Quick Start
 
-### 1. Prerequisites
+### Prerequisites
+- Python 3.6 or higher
+- ManaPool seller account with API access
 
--   Python 3.6+
--   pip (Python package installer)
+### Installation
 
-### 2. Installation
+1. Clone or download this repository
+2. Navigate to the project directory in your terminal
+3. Install required dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-1.  Clone or download this repository.
-2.  Navigate to the project directory in your terminal.
-3.  Install the required Python packages:
-    ```bash
-    pip install -r requirements.txt
-    ```
-    If you do not have a `requirements.txt` file, you can install the packages individually:
-    ```bash
-    pip install pandas python-dotenv requests
-    ```
+### Configuration
 
-## Configuration
+1. **API Credentials**: Create a `.env` file in the project root:
+   ```
+   MANAPOOL_EMAIL="your_email@example.com"
+   MANAPOOL_API_KEY="your_manapool_api_key"
+   ```
+   Get your API key from: https://manapool.com/seller/integrations/manapool-api
 
-Before running the script, you need to configure your credentials and set locations.
+2. **Location Mapping** (Optional): The script will automatically create a `locations.json` file as you assign locations to new sets. You can also pre-create this file if desired:
+   ```json
+   {
+     "M21": "Shelf A",
+     "ZNR": "Shelf B", 
+     "KHM": "Box 1",
+     "STX": "Binder 1"
+   }
+   ```
 
-### 1. API Credentials
+### Usage
 
-1.  Create a file named `.env` in the root of the project directory.
-2.  Add your ManaPool email and API key (retreived from https://manapool.com/seller/integrations/manapool-api) to the `.env` file as follows:
+Run the script:
+```bash
+python manapoolsheet.py
+```
 
-    ```
-    MANAPOOL_EMAIL="your_email@example.com"
-    MANAPOOL_API_KEY="your_manapool_api_key"
-    ```
+**First Run:**
+- Choose which orders to retrieve (Not Shipped/Shipped/All)
+- Configure image downloads (Y/N)
+- Configure HTML reports (Y/N)
+- Settings are saved for future runs
 
-    **Note:** The `.env` file should never be committed to version control. It is included in the `.gitignore` file to prevent accidental exposure of your credentials.
+**Subsequent Runs:**
+- Just select which orders to retrieve
+- Type 'reset' to change saved preferences
 
-### 2. Set Locations
+## Output Files
 
-1.  Create a file named `locations.json` in the root of the project directory.
-2.  In this file, create a JSON object that maps your card set codes to their physical storage locations. The set codes are case-insensitive.
+### CSV Export
+Contains detailed order data with columns:
+- Order ID and label
+- Physical location (based on set mapping)
+- Card details (name, set, number, condition, finish)
+- Pricing and quantity information
+- Scryfall image URLs
+- TCGPlayer SKU
 
-    **Example `locations.json`:**
-    ```json
-    {
-      "FIN": "Shelf 1",
-      "PIP": "Shelf 2",
-      "FIC": "Shelf 4",
-      "LCI": "Box A",
-      "MKM": "Box A",
-      "OTJ": "Binder 3"
-    }
-    ```
-    If a set from an order is not found in this file, its location will be marked as "Unassigned" in the output CSV.
+### HTML Visual Report (Optional)
+Interactive web-based report featuring:
+- **Location View**: Cards organized by storage location for efficient picking
+- **Order View**: Cards grouped by order for efficient packing
+- Progress tracking with checkboxes
+- Card images and detailed information
+- Direct links to ManaPool order pages
+- High-value card highlighting
 
-## Usage
+## Advanced Features
 
-1.  Open your terminal and navigate to the project directory.
-2.  Run the script:
-    ```bash
-    python manapoolsheet.py
-    ```
-3.  You will be prompted to select which orders to retrieve:
-    -   **1: Not Shipped (Default)** - Fetches all orders that are not yet marked as shipped.
-    -   **2: Shipped Only** - Fetches all orders that have been marked as shipped.
-    -   **3: All Orders** - Fetches every order in your history.
-4.  The script will then fetch the order data, process it, and create a CSV file in the project directory (e.g., `fulfillment_list_not_shipped.csv`).
+### Smart Location Assignment
+- Automatically prompts for new sets not in your location mapping
+- Provides autocomplete suggestions from existing locations
+- Updates location file automatically
 
-## Output CSV File
+### Image Management
+- **URL Mode**: Fast, minimal storage (default)
+- **Local Download Mode**: Offline access, cached for performance
+- Intelligent caching prevents re-downloading existing images
+- Images stored in organized directory structure
 
-The generated CSV file will contain the following columns:
+### User Preferences
+- Automatically saves image download and HTML report preferences
+- Reset option available when needed
+- Environment variable override support
 
--   `order_id`: The unique identifier for the order.
--   `order_label`: The label assigned to the order in ManaPool.
--   `location`: The physical location of the set, based on your `locations.json` file.
--   `quantity`: The quantity of the card in the order.
--   `name`: The name of the card.
--   `set`: The set code of the card.
--   `number`: The collector number of the card.
--   `condition`: The condition of the card.
--   `finish`: The finish of the card (e.g., foil, non-foil).
--   `price`: The price of the individual card.
--   `tcgplayer_sku`: The TCGPlayer SKU for the product, if available.
--   `scryfall_image_uri`: A URL to the card's image on Scryfall.
+## File Structure
+
+After setup, your directory will contain:
+```
+├── manapoolsheet.py           # Main script
+├── requirements.txt           # Python dependencies
+├── .env                      # Your credentials (create this)
+├── locations.json            # Set-to-location mapping (optional)
+├── settings.json             # User preferences (auto-created)
+├── fulfillment_list_*.csv    # Generated order lists
+├── fulfillment_list_*.html   # Visual reports (if enabled)
+└── order_retrieval_log.txt   # Application logs
+```
+
+## Sorting and Organization
+
+The CSV output is intelligently sorted by:
+1. Location with most total quantity first
+2. Alphabetical location names (for consistency)
+3. Sets with most quantity within each location first
+4. Alphabetical set names (for consistency)  
+5. Alphabetical card names
+
+This organization optimizes the picking workflow by prioritizing high-volume areas and maintaining consistent ordering.
+
+## Troubleshooting
+
+**Common Issues:**
+- **API Errors**: Verify credentials in .env file
+- **Missing Images**: Check internet connection for Scryfall API access
+- **Performance**: First run with images enabled will be slower
+- **Storage**: Each image is ~100-200KB, plan accordingly
+
+**Getting Help:**
+- Check `order_retrieval_log.txt` for detailed error messages
+- Ensure Python 3.6+ is installed
+- Verify all required packages are installed via requirements.txt
+
+## Environment Variables
+
+Your `.env` file supports:
+```bash
+# Required
+MANAPOOL_EMAIL="your_email@example.com"
+MANAPOOL_API_KEY="your_api_key"
+
+# Optional
+DOWNLOAD_IMAGES=true    # Force enable/disable image downloads
+```
+
+## Performance Tips
+
+- **Quick Checks**: Disable images and HTML for fast order verification
+- **First Setup**: Enable images on first run, then reuse cached images
+- **Storage Management**: Delete `images/` folder to reclaim space (will re-download as needed)
+- **Large Inventories**: Consider using location mapping to organize efficiently
+
+## Security Notes
+
+- API credentials are stored locally in .env file
+- .env file is excluded from version control via .gitignore
+- No credentials are transmitted except to official ManaPool/Scryfall APIs
+- Generated files contain only order data you already have access to
+
+## License
+
+This project is open source. See the LICENSE file for details.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit pull requests or open issues for bugs and feature requests.
