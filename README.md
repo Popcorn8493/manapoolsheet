@@ -20,24 +20,33 @@ This script connects to the ManaPool and Scryfall APIs to retrieve orders, colle
 ## Quick Start
 
 ### Prerequisites
-- Python 3.6 or higher
-- ManaPool seller account with API access
+
+* Python 3.x
 
 ### Installation
 
-1. Clone or download this repository
-   ```bash
-   git clone https://github.com/Popcorn8493/manapoolsheet.git
-   ```
-   
-3. Navigate to the project directory in your terminal
-    ```bash
-   cd manapoolsheet
-   ```
-5. Install required dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+1.  Clone the repo
+    ```sh
+    git clone [https://github.com/Popcorn8493/manapoolsheet.git](https://github.com/Popcorn8493/manapoolsheet.git)
+    ```
+2.  Create a virtual environment
+    ```sh
+    python3 -m venv venv
+    ```
+3.  Activate the virtual environment
+    * **Windows:**
+        ```sh
+        .\venv\Scripts\activate
+        ```
+    * **macOS/Linux:**
+        ```sh
+        source venv/bin/activate
+        ```
+4.  Install the required packages
+    ```sh
+    pip install -r requirements.txt
+    ```
+
 
 ### Configuration
 
