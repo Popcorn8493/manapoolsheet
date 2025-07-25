@@ -26,8 +26,15 @@ This script connects to the ManaPool and Scryfall APIs to retrieve orders, colle
 ### Installation
 
 1. Clone or download this repository
-2. Navigate to the project directory in your terminal
-3. Install required dependencies:
+   ```bash
+   git clone https://github.com/Popcorn8493/manapoolsheet.git
+   ```
+   
+3. Navigate to the project directory in your terminal
+    ```bash
+   cd manapoolsheet
+   ```
+5. Install required dependencies:
    ```bash
    pip install -r requirements.txt
    ```
