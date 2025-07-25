@@ -1,0 +1,31 @@
+# Sensitive files
+.env
+email.txt
+api-key.txt
+
+# Generated files
+*.csv
+*.html
+order_retrieval_log.txt
+settings.json
+image_cache.json
+
+# Downloaded images
+images/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+button_location_test.html
