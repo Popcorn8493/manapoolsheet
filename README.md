@@ -1,4 +1,4 @@
-# ManaPool Order Retriever
+# Manapoolsheet
 
 A Python tool for ManaPool sellers to automate the creation of fulfillment lists from their ManaPool account.
 
