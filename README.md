@@ -2,6 +2,8 @@
 
 ### Installation
 
+Python 3.7+ https://www.python.org/
+
 1. **Clone the repository**
 
    ```bash
