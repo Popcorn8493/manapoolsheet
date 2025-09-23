@@ -15,38 +15,30 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 
-# --- Configuration ---
-
-# Load environment variables from a .env file
 load_dotenv()
 
 LOG_FILE = "order_processing_log.txt"
 BASE_OUTPUT_CSV_NAME = "fulfillment_list"
-LOCATIONS_FILE = "locations.json"  # File to map MTG sets to physical storage locations
-IMAGES_DIR = "images"  # Directory to store downloaded card images
-IMAGE_CACHE_FILE = "image_cache.json"  # Cache file to track downloaded images
-SETTINGS_FILE = "settings.json"  # User preferences file
+LOCATIONS_FILE = "locations.json"
+IMAGES_DIR = "images"
+IMAGE_CACHE_FILE = "image_cache.json"
+SETTINGS_FILE = "settings.json"
+CONFIG_FILE = "config.json"
 
-# Data directory structure
 DATA_DIR = "data"
 CSV_DIR = os.path.join(DATA_DIR, "csv")
 HTML_DIR = os.path.join(DATA_DIR, "html")
 
-# API Configuration
-ORDERS_API_BASE_URL = "https://api.cardmarket.com/v1"  # Replace with your marketplace API
-IMAGES_API_BASE_URL = "https://api.scryfall.com"  # Scryfall API for card images
+ORDERS_API_BASE_URL = "https://www.manapool.com/api/v1"
+IMAGES_API_BASE_URL = "https://api.scryfall.com"
 FULFILLMENT_FIELD = "fulfillment_status"
 SHIPPED_VALUE = "shipped"
 
 
-# --- Helper Functions ---
-
 def load_set_locations(filename: str) -> Dict[str, str]:
-	"""Loads the MTG set-to-location mapping from a JSON file."""
 	try:
 		with open(filename, "r", encoding="utf-8") as f:
 			locations = json.load(f)
-			# Ensure all keys are uppercase for consistent matching
 			return {k.upper(): v for k, v in locations.items()}
 	except FileNotFoundError:
 		logging.warning(f"Location file not found: {filename}. Location data will be missing.")
@@ -57,7 +49,6 @@ def load_set_locations(filename: str) -> Dict[str, str]:
 
 
 def save_set_locations(filename: str, locations: Dict[str, str]) -> None:
-	"""Saves the MTG set-to-location mapping to a JSON file."""
 	try:
 		with open(filename, "w", encoding="utf-8") as f:
 			json.dump(locations, f, indent=2, sort_keys=True)
@@ -67,7 +58,6 @@ def save_set_locations(filename: str, locations: Dict[str, str]) -> None:
 
 
 def load_image_cache(filename: str) -> Dict[str, str]:
-	"""Load the image cache from a JSON file."""
 	try:
 		with open(filename, "r", encoding="utf-8") as f:
 			return json.load(f)
@@ -76,7 +66,6 @@ def load_image_cache(filename: str) -> Dict[str, str]:
 
 
 def save_image_cache(filename: str, cache: Dict[str, str]) -> None:
-	"""Save the image cache to a JSON file."""
 	try:
 		with open(filename, "w", encoding="utf-8") as f:
 			json.dump(cache, f, indent=2, sort_keys=True)
@@ -85,7 +74,6 @@ def save_image_cache(filename: str, cache: Dict[str, str]) -> None:
 
 
 def load_user_settings(filename: str) -> Dict[str, Any]:
-	"""Load user settings from a JSON file."""
 	try:
 		with open(filename, "r", encoding="utf-8") as f:
 			return json.load(f)
@@ -97,7 +85,6 @@ def load_user_settings(filename: str) -> Dict[str, Any]:
 
 
 def save_user_settings(filename: str, settings: Dict[str, Any]) -> None:
-	"""Save user settings to a JSON file."""
 	try:
 		with open(filename, "w", encoding="utf-8") as f:
 			json.dump(settings, f, indent=2, sort_keys=True)
@@ -105,35 +92,56 @@ def save_user_settings(filename: str, settings: Dict[str, Any]) -> None:
 		logging.error(f"Failed to save user settings to {filename}: {exc}")
 
 
+def load_config(filename: str) -> Dict[str, Any]:
+	try:
+		with open(filename, "r", encoding="utf-8") as f:
+			return json.load(f)
+	except (FileNotFoundError, json.JSONDecodeError):
+		return {
+			"user_preferences": {
+				"auto_assign_locations": False,
+				"default_location": "Unassigned",
+				"skip_location_prompts": False,
+				"download_images": None,
+				"generate_html_report": None,
+				"default_filter_choice": "1",
+				"fetch_recent_orders": False,
+				"recent_orders_count": 50
+			},
+			"api_settings": {
+				"orders_per_page": 100,
+				"request_timeout": 20,
+				"retry_attempts": 3
+			},
+			"output_settings": {
+				"sort_by_location": True,
+				"include_high_value_alerts": True,
+				"auto_open_html": True
+			}
+		}
+
+
 def generate_image_key(card_name: str, set_code: str, collector_number: str) -> str:
-	"""Generate a unique key for caching downloaded card images."""
-	# Create a consistent key that uniquely identifies a card
 	safe_name = card_name.replace(' ', '_').replace('/', '_')
 	return f"{set_code.upper()}_{collector_number}_{safe_name}"
 
 
 def download_card_image(image_url: str, image_key: str, images_dir: str) -> str:
-	"""Download a card image and return the local file path."""
 	if image_url == "N/A":
 		return "N/A"
 	
-	# Create images directory if it doesn't exist
 	os.makedirs(images_dir, exist_ok=True)
 	
-	# Generate filename with .jpg extension
 	filename = f"{image_key}.jpg"
 	filepath = os.path.join(images_dir, filename)
 	
-	# Check if file already exists
 	if os.path.exists(filepath):
 		return filepath
 	
 	try:
-		# Download the image
 		response = requests.get(image_url, timeout=30)
 		response.raise_for_status()
 		
-		# Save the image
 		with open(filepath, 'wb') as f:
 			f.write(response.content)
 		
@@ -146,29 +154,32 @@ def download_card_image(image_url: str, image_key: str, images_dir: str) -> str:
 
 
 def natural_sort_key(s: str) -> List[Any]:
-	"""Key for natural sorting strings containing numbers."""
 	return [int(text) if text.isdigit() else text.lower()
 	        for text in re.split(r'(\d+)', s)]
 
 
 def get_location_for_set(set_code: str, existing_locations: Dict[str, str],
-                         new_sets_found: Set[str]) -> str:
-	"""Get location for an MTG set, prompting user for new sets."""
+                         new_sets_found: Set[str], config: Dict[str, Any]) -> str:
 	set_upper = set_code.upper()
 	
-	# If we already have this set mapped, return it
 	if set_upper in existing_locations:
 		return existing_locations[set_upper]
 	
-	# If we've already asked about this set in this session, skip asking again
 	if set_upper in new_sets_found:
-		return existing_locations.get(set_upper, "Unassigned")
+		return existing_locations.get(set_upper, config["user_preferences"]["default_location"])
 	
-	# New set found - prompt user
+	user_prefs = config["user_preferences"]
+	
+	if user_prefs["skip_location_prompts"]:
+		selected_location = user_prefs["default_location"]
+		existing_locations[set_upper] = selected_location
+		logging.info(f"Auto-assigned {set_code} to {selected_location} (skip_location_prompts enabled)")
+		return selected_location
+	
 	new_sets_found.add(set_upper)
 	unique_locations = sorted(set(existing_locations.values()), key=natural_sort_key)
 	
-	print(f"\n📦 New MTG set found: {set_code}")
+	print(f"\nNew MTG set found: {set_code}")
 	print("Existing locations:")
 	for i, loc in enumerate(unique_locations, 1):
 		print(f"  {i}: {loc}")
@@ -197,38 +208,33 @@ def get_location_for_set(set_code: str, existing_locations: Dict[str, str],
 
 
 def format_high_value_reminder(items: List[Dict[str, Any]]) -> str:
-	"""Generate a reminder message for high-value cards that may be in binders."""
 	high_value_items = [item for item in items if item.get('price', 0) >= 10.0]
 	
 	if not high_value_items:
 		return ""
 	
-	reminder = f"\n💰 HIGH VALUE ALERT: {len(high_value_items)} cards worth $10+ may be in binders:\n"
+	reminder = f"\nHIGH VALUE ALERT: {len(high_value_items)} cards worth $10+ may be in binders:\n"
 	for item in sorted(high_value_items, key=lambda x: x.get('price', 0), reverse=True):
 		price = item.get('price', 0)
 		name = item.get('name', 'N/A')
 		set_code = item.get('set', 'N/A')
 		order_id = item.get('order_id', 'N/A')
-		reminder += f"  • ${price:.2f} - {name} [{set_code}] (Order: {order_id})\n"
+		reminder += f"  - ${price:.2f} - {name} [{set_code}] (Order: {order_id})\n"
 	
 	return reminder
 
 
 def get_scryfall_image_uri(card_name: str, set_code: str, collector_number: str) -> str:
-	"""Return a card image URL from Scryfall API."""
-	# Scryfall API requests a 50-100ms delay between requests
 	time.sleep(0.1)
 	
-	# First try exact set / collector lookup
 	try:
 		url = f"{IMAGES_API_BASE_URL}/cards/{set_code.lower()}/{collector_number}"
 		r = requests.get(url, timeout=10)
 		r.raise_for_status()
 		return r.json().get("image_uris", {}).get("normal", "N/A")
 	except requests.exceptions.RequestException:
-		pass  # Fallback to fuzzy search
+		pass
 	
-	# Fallback: fuzzy name search
 	try:
 		url = f"{IMAGES_API_BASE_URL}/cards/named"
 		r = requests.get(url, params={"fuzzy": card_name}, timeout=10)
@@ -240,7 +246,6 @@ def get_scryfall_image_uri(card_name: str, set_code: str, collector_number: str)
 
 
 def get_order_details(order_id: str, headers: Dict[str, str]) -> Optional[Dict[str, Any]]:
-	"""Fetch the full order details for order_id."""
 	try:
 		url = f"{ORDERS_API_BASE_URL}/seller/orders/{order_id}"
 		r = requests.get(url, headers=headers, timeout=15)
@@ -251,23 +256,26 @@ def get_order_details(order_id: str, headers: Dict[str, str]) -> Optional[Dict[s
 		return None
 
 
-def get_user_html_report_choice(settings: Dict[str, Any]) -> bool:
-	"""Prompt the user to enable/disable HTML report generation."""
-	# Check saved settings - use them directly if they exist
+def get_user_html_report_choice(settings: Dict[str, Any], config: Dict[str, Any]) -> bool:
+	user_prefs = config["user_preferences"]
+	
+	if user_prefs.get("generate_html_report") is not None:
+		logging.info(f"Using config HTML report preference: {'Enabled' if user_prefs['generate_html_report'] else 'Disabled'}")
+		return user_prefs["generate_html_report"]
+	
 	if settings.get("generate_html_report") is not None:
 		logging.info(
 				f"Using saved HTML report preference: {'Enabled' if settings['generate_html_report'] else 'Disabled'}")
 		return settings["generate_html_report"]
 	
-	# If not set in settings, prompt user for initial setup
 	while True:
-		print("\n🎨 HTML Report Options:")
+		print("\nHTML Report Options:")
 		print("  Generate visual HTML report? This will:")
-		print("  • Create an interactive HTML file with card images")
-		print("  • Show cards organized by location")
-		print("  • Include progress tracking checkboxes")
-		print("  • Open automatically in your browser")
-		print("  • Allow quick cleanup when finished")
+		print("  - Create an interactive HTML file with card images")
+		print("  - Show cards organized by location")
+		print("  - Include progress tracking checkboxes")
+		print("  - Open automatically in your browser")
+		print("  - Allow quick cleanup when finished")
 		print("  (This choice will be saved for future runs)")
 		choice = input("Generate HTML report? (Y/n): ").strip().lower()
 		
@@ -280,7 +288,6 @@ def get_user_html_report_choice(settings: Dict[str, Any]) -> bool:
 
 
 def get_user_filter_choice(settings: Dict[str, Any]) -> str:
-	"""Prompt the user to select an order filter and return their choice."""
 	print("\n" + "=" * 40)
 	print("  MTG Order Fulfillment Tool")
 	print("=" * 40)
@@ -290,43 +297,66 @@ def get_user_filter_choice(settings: Dict[str, Any]) -> str:
 		print("  1: Not Shipped (Default)")
 		print("  2: Shipped Only")
 		print("  3: All Orders")
+		print("  4: Recent Orders (X most recent)")
 		if settings.get("download_images") is not None or settings.get("generate_html_report") is not None:
 			print("  (Type 'reset' to change saved preferences)")
-		choice = input("Enter your choice (1-3): ").strip() or "1"
+		choice = input("Enter your choice (1-4): ").strip() or "1"
 		if choice.lower() == "reset":
 			settings["download_images"] = None
 			settings["generate_html_report"] = None
 			print("Preferences reset. You'll be prompted to set them again.")
 			continue
-		if choice in ["1", "2", "3"]:
+		if choice in ["1", "2", "3", "4"]:
 			return choice
-		print("\nInvalid choice. Please enter 1, 2, or 3.")
+		print("\nInvalid choice. Please enter 1, 2, 3, or 4.")
 
 
-def get_user_image_download_choice(settings: Dict[str, Any]) -> bool:
-	"""Prompt the user to enable/disable image downloading."""
-	# Check environment variable first
+def get_recent_orders_count(config: Dict[str, Any]) -> int:
+	user_prefs = config["user_preferences"]
+	
+	if user_prefs["fetch_recent_orders"] and user_prefs["recent_orders_count"]:
+		return user_prefs["recent_orders_count"]
+	
+	while True:
+		try:
+			count = input("How many recent orders to fetch? (default: 50): ").strip()
+			if not count:
+				return 50
+			count = int(count)
+			if count > 0:
+				return count
+			else:
+				print("Please enter a positive number.")
+		except ValueError:
+			print("Please enter a valid number.")
+
+
+def get_user_image_download_choice(settings: Dict[str, Any], config: Dict[str, Any]) -> bool:
 	download_images_env = os.getenv("DOWNLOAD_IMAGES", "").lower()
 	if download_images_env in ["true", "1", "yes"]:
 		return True
 	elif download_images_env in ["false", "0", "no"]:
 		return False
 	
-	# Check saved settings - use them directly if they exist
+	user_prefs = config["user_preferences"]
+	
+	if user_prefs.get("download_images") is not None:
+		logging.info(f"Using config image download preference: {'Enabled' if user_prefs['download_images'] else 'Disabled'}")
+		return user_prefs["download_images"]
+	
 	if settings.get("download_images") is not None:
 		logging.info(
 				f"Using saved image download preference: {'Enabled' if settings['download_images'] else 'Disabled'}")
 		return settings["download_images"]
 	
-	# If not set in environment or settings, prompt user for initial setup
 	while True:
-		print("\n📸 Image Download Options:")
+		print("\nImage Download Options:")
 		print("  Download card images locally? This will:")
-		print("  • Create an 'images' folder with card images")
-		print("  • CSV will always contain image URLs")
-		print("  • HTML report will use local images for offline viewing")
-		print("  • Skip downloading images that already exist")
-		print("  • Take additional time for initial downloads")
+		print("  - Create an 'images' folder with card images")
+		print("  - CSV will always contain image URLs")
+		print("  - HTML report will use local images for offline viewing")
+		print("  - Skip downloading images that already exist")
+		print("  - Take additional time for initial downloads")
 		print("  (This choice will be saved for future runs)")
 		choice = input("Download images? (y/N): ").strip().lower()
 		
@@ -340,12 +370,9 @@ def get_user_image_download_choice(settings: Dict[str, Any]) -> bool:
 
 def generate_html_report(items: List[Dict[str, Any]], output_filename: str,
                          filter_description: str, timestamp: str, download_images: bool) -> str:
-	"""Generate an HTML report with embedded images and interactive features."""
-	# Extract filename from path and create HTML filename in HTML directory
 	csv_filename = os.path.basename(output_filename)
 	html_filename = os.path.join(HTML_DIR, csv_filename.replace('.csv', '.html'))
 	
-	# Group items by location for better organization
 	items_by_location = {}
 	for item in items:
 		location = item.get('location', 'Unknown')
@@ -353,13 +380,11 @@ def generate_html_report(items: List[Dict[str, Any]], output_filename: str,
 			items_by_location[location] = []
 		items_by_location[location].append(item)
 	
-	# Count statistics
 	total_items = len(items)
 	total_value = sum(item.get('price', 0) for item in items)
 	unique_orders = len(set(item.get('order_id', '') for item in items))
 	high_value_count = len([item for item in items if item.get('price', 0) >= 10.0])
 	
-	# HTML template with interactive features
 	html_content = f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -429,7 +454,7 @@ def generate_html_report(items: List[Dict[str, Any]], output_filename: str,
 </head>
 <body>
     <div class="header">
-        <h1>📦 MTG Order Fulfillment Report</h1>
+        <h1>MTG Order Fulfillment Report</h1>
         <p><strong>{filter_description}</strong> Orders</p>
         <p>Generated on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
     </div>
@@ -454,7 +479,6 @@ def generate_html_report(items: List[Dict[str, Any]], output_filename: str,
     </div>
 """
 	
-	# Add location sections (simplified)
 	for location, location_items in items_by_location.items():
 		location_total = sum(item.get('price', 0) for item in location_items)
 		safe_location = html.escape(location)
@@ -462,7 +486,7 @@ def generate_html_report(items: List[Dict[str, Any]], output_filename: str,
 		html_content += f"""
     <div class="location-section">
         <div class="location-header">
-            📍 {safe_location} ({len(location_items)} items - ${location_total:.2f})
+            {safe_location} ({len(location_items)} items - ${location_total:.2f})
         </div>
         <div class="items-grid">
 """
@@ -473,9 +497,18 @@ def generate_html_report(items: List[Dict[str, Any]], output_filename: str,
 			price = item.get('price', 0)
 			quantity = item.get('quantity', 1)
 			order_id = html.escape(item.get('order_id', 'N/A'))
+			local_image_path = item.get('local_image_path', '')
+			scryfall_image_uri = item.get('scryfall_image_uri', '')
+			
+			image_html = ""
+			if local_image_path and local_image_path != "N/A" and os.path.exists(local_image_path):
+				image_html = f'<img src="file://{os.path.abspath(local_image_path)}" style="width: 100%; max-width: 200px; height: auto; margin-bottom: 10px;" alt="{card_name}">'
+			elif scryfall_image_uri and scryfall_image_uri != "N/A":
+				image_html = f'<img src="{scryfall_image_uri}" style="width: 100%; max-width: 200px; height: auto; margin-bottom: 10px;" alt="{card_name}">'
 			
 			html_content += f"""
             <div class="item-card">
+                {image_html}
                 <div class="item-details">
                     <div style="font-weight: bold; font-size: 1.1em;">{card_name}</div>
                     <div style="margin: 8px 0;">
@@ -499,7 +532,6 @@ def generate_html_report(items: List[Dict[str, Any]], output_filename: str,
 </html>
 """
 	
-	# Write the HTML file
 	try:
 		with open(html_filename, 'w', encoding='utf-8') as f:
 			f.write(html_content)
@@ -511,8 +543,6 @@ def generate_html_report(items: List[Dict[str, Any]], output_filename: str,
 
 
 def main() -> None:
-	"""Main function for MTG order processing and fulfillment list generation."""
-	# --- Logging Setup ---
 	logging.basicConfig(level=logging.INFO,
 	                    format="%(asctime)s - %(levelname)s - %(message)s",
 	                    handlers=[
@@ -520,14 +550,26 @@ def main() -> None:
 			                    logging.StreamHandler(sys.stdout)
 	                    ])
 	
-	# --- Load User Settings and Get Choices ---
+	config = load_config(CONFIG_FILE)
 	user_settings = load_user_settings(SETTINGS_FILE)
 	
-	filter_choice = get_user_filter_choice(user_settings)
-	download_images = get_user_image_download_choice(user_settings)
-	generate_html = get_user_html_report_choice(user_settings)
+	user_prefs = config["user_preferences"]
+	api_settings = config["api_settings"]
 	
-	# Save updated settings
+	if user_prefs["default_filter_choice"] and not user_settings.get("filter_choice"):
+		filter_choice = user_prefs["default_filter_choice"]
+		logging.info(f"Using default filter choice from config: {filter_choice}")
+	else:
+		filter_choice = get_user_filter_choice(user_settings)
+	
+	recent_orders_count = None
+	if filter_choice == "4":
+		recent_orders_count = get_recent_orders_count(config)
+		logging.info(f"Fetching {recent_orders_count} most recent orders")
+	
+	download_images = get_user_image_download_choice(user_settings, config)
+	generate_html = get_user_html_report_choice(user_settings, config)
+	
 	user_settings["download_images"] = download_images
 	user_settings["generate_html_report"] = generate_html
 	save_user_settings(SETTINGS_FILE, user_settings)
@@ -536,57 +578,91 @@ def main() -> None:
 	if set_locations:
 		logging.info(f"Successfully loaded {len(set_locations)} set locations.")
 	
-	# Load image cache if downloading images
 	image_cache = {}
 	if download_images:
 		image_cache = load_image_cache(IMAGE_CACHE_FILE)
 		logging.info(f"Image download enabled. Loaded {len(image_cache)} cached images.")
 	
-	# --- Credentials ---
-	# Read credentials securely from environment variables
-	email = os.getenv("MARKETPLACE_EMAIL")
-	token = os.getenv("MARKETPLACE_API_KEY")
+	email = os.getenv("MANAPOOL_EMAIL")
+	token = os.getenv("MANAPOOL_API_KEY")
 	
 	if not email or not token:
-		logging.error("MARKETPLACE_EMAIL or MARKETPLACE_API_KEY not found in .env file.")
+		logging.error("MANAPOOL_EMAIL or MANAPOOL_API_KEY not found in .env file.")
 		logging.error("Please create a .env file and add your marketplace credentials.")
 		return
 	
+	logging.info(f"Using email: {email}")
+	logging.info(f"Using token: {token[:10]}..." if token else "No token found")
+	
 	headers = {
-			"X-Marketplace-Email":        email,
-			"X-Marketplace-Access-Token": token,
+			"X-ManaPool-Email": email,
+			"X-ManaPool-Access-Token": token,
+			"Content-Type": "application/json",
 	}
 	
-	# --- Create Data Directories ---
+	logging.info(f"Request headers: {headers}")
+	
 	os.makedirs(CSV_DIR, exist_ok=True)
 	os.makedirs(HTML_DIR, exist_ok=True)
 	logging.info(f"Created data directories: {CSV_DIR}, {HTML_DIR}")
 	
-	# Generate timestamp for filenames
 	now = datetime.now()
 	timestamp = now.strftime("%Y-%m-%d_%H%M")
 	
-	# --- Fetch All Orders ---
 	logging.info("Fetching all orders from marketplace…")
-	try:
-		resp = requests.get(f"{ORDERS_API_BASE_URL}/seller/orders",
-		                    headers=headers,
-		                    timeout=20)
-		resp.raise_for_status()
-		data = resp.json()
-		orders_list: List[Dict[str, Any]] = data.get("data") or data.get("orders") or data
-	except requests.exceptions.RequestException as exc:
-		logging.error(f"API communication error: {exc}")
-		if exc.response is not None:
-			logging.error(f"Response content: {exc.response.text}")
-		return
-	except (ValueError, KeyError) as exc:
-		logging.error(f"Error parsing API response: {exc}")
-		return
+	orders_list: List[Dict[str, Any]] = []
+	page = 1
+	per_page = api_settings["orders_per_page"]
+	
+	while True:
+		logging.info(f"Fetching page {page} (up to {per_page} orders per page)...")
+		try:
+			url = f"{ORDERS_API_BASE_URL}/seller/orders"
+			params = {"page": page, "per_page": per_page}
+			
+			resp = requests.get(url, headers=headers, params=params, timeout=api_settings["request_timeout"])
+			resp.raise_for_status()
+			data = resp.json()
+			
+			page_orders = data.get("data") or data.get("orders") or data
+			
+			if not page_orders or len(page_orders) == 0:
+				logging.info(f"No more orders found on page {page}")
+				break
+			
+			orders_list.extend(page_orders)
+			logging.info(f"Retrieved {len(page_orders)} orders from page {page} (total so far: {len(orders_list)})")
+			
+			if recent_orders_count and len(orders_list) >= recent_orders_count:
+				logging.info(f"Reached requested count of {recent_orders_count} recent orders")
+				orders_list = orders_list[:recent_orders_count]
+				break
+			
+			if len(page_orders) < per_page:
+				logging.info(f"Last page reached (got {len(page_orders)} orders, expected {per_page})")
+				break
+			
+			page += 1
+			
+		except requests.exceptions.RequestException as exc:
+			logging.error(f"API communication error on page {page}: {exc}")
+			if exc.response is not None:
+				logging.error(f"Response content: {exc.response.text}")
+			break
+		except (ValueError, KeyError) as exc:
+			logging.error(f"Error parsing API response on page {page}: {exc}")
+			break
 	
 	logging.info(f"Total orders returned from API: {len(orders_list)}")
 	
-	# --- Filter Orders Based on User Choice ---
+	if recent_orders_count:
+		logging.info(f"Total orders fetched: {len(orders_list)}")
+		logging.info(f"Sample order labels: {[order.get('label', 'N/A') for order in orders_list[:5]]}")
+		
+		# Simple approach: just take the first N orders (API should return them in correct order)
+		orders_list = orders_list[:recent_orders_count]
+		logging.info(f"Selected {len(orders_list)} most recent orders: {[order.get('label', 'N/A') for order in orders_list]}")
+	
 	if filter_choice == "1":
 		filtered_orders = [
 				o for o in orders_list if o.get(FULFILLMENT_FIELD) != SHIPPED_VALUE
@@ -597,7 +673,10 @@ def main() -> None:
 				o for o in orders_list if o.get(FULFILLMENT_FIELD) == SHIPPED_VALUE
 		]
 		filter_description = "Shipped"
-	else:  # choice == "3"
+	elif filter_choice == "4":
+		filtered_orders = orders_list
+		filter_description = f"Recent ({recent_orders_count} most recent)"
+	else:
 		filtered_orders = orders_list
 		filter_description = "All"
 	
@@ -607,7 +686,6 @@ def main() -> None:
 		logging.info("No orders match the selected filter — exiting.")
 		return
 	
-	# --- Process Orders and Line Items ---
 	items: List[Dict[str, Any]] = []
 	total_to_process = len(filtered_orders)
 	new_sets_found: Set[str] = set()
@@ -631,26 +709,20 @@ def main() -> None:
 			set_code = single.get("set", "N/A")
 			collector_number = single.get("number", "N/A")
 			
-			# Get location with interactive assignment for new sets
-			location = get_location_for_set(set_code, set_locations, new_sets_found)
+			location = get_location_for_set(set_code, set_locations, new_sets_found, config)
 			
 			image_uri = get_scryfall_image_uri(card_name, set_code, collector_number)
 			
-			# Handle image downloading if enabled
 			local_image_path = None
 			if download_images and image_uri != "N/A":
 				image_key = generate_image_key(card_name, set_code, collector_number)
 				
-				# Check cache first
 				if image_key in image_cache:
 					local_image_path = image_cache[image_key]
-					# Verify file still exists
 					if not os.path.exists(local_image_path):
-						# File was deleted, re-download
 						local_image_path = download_card_image(image_uri, image_key, IMAGES_DIR)
 						image_cache[image_key] = local_image_path
 				else:
-					# Download new image
 					local_image_path = download_card_image(image_uri, image_key, IMAGES_DIR)
 					image_cache[image_key] = local_image_path
 			
@@ -674,35 +746,28 @@ def main() -> None:
 		logging.info("No line items found in the processed orders — nothing exported.")
 		return
 	
-	# --- Save Updated Locations ---
 	if new_sets_found:
 		save_set_locations(LOCATIONS_FILE, {k.upper(): v for k, v in set_locations.items()})
 	
-	# --- Save Updated Image Cache ---
 	if download_images and image_cache:
 		save_image_cache(IMAGE_CACHE_FILE, image_cache)
 		logging.info(f"Saved {len(image_cache)} images to cache.")
 	
-	# --- High Value Card Reminder ---
 	high_value_reminder = format_high_value_reminder(items)
 	if high_value_reminder:
 		print(high_value_reminder)
 		logging.info(f"Found {len([i for i in items if i.get('price', 0) >= 10.0])} high-value cards (>=$10)")
 	
-	# --- Determine output filename based on filter ---
 	if filter_choice == "1":
-		filter_description = "Not Shipped"
 		output_filename = os.path.join(CSV_DIR, f"{timestamp}_orders_not-shipped.csv")
 	elif filter_choice == "2":
-		filter_description = "Shipped"
 		output_filename = os.path.join(CSV_DIR, f"{timestamp}_orders_shipped.csv")
+	elif filter_choice == "4":
+		output_filename = os.path.join(CSV_DIR, f"{timestamp}_orders_recent-{recent_orders_count}.csv")
 	else:
-		filter_description = "All"
 		output_filename = os.path.join(CSV_DIR, f"{timestamp}_orders_all.csv")
 	
-	# --- Export to CSV ---
 	df = pd.DataFrame(items)
-	# Reorder columns to have location near the front
 	cols = [
 			'order_id', 'order_label', 'location', 'quantity', 'name', 'set',
 			'number', 'condition', 'finish', 'price', 'tcgplayer_sku',
@@ -715,7 +780,6 @@ def main() -> None:
 	df['location_total_qty'] = df.groupby('location')['quantity'].transform('sum')
 	df['set_total_qty'] = df.groupby(['location', 'set'])['quantity'].transform('sum')
 	
-	# Sort by location and set for optimal picking workflow
 	df.sort_values(by=['location_total_qty', 'location', 'set_total_qty', 'set', 'name'],
 	               ascending=[False, True, False, True, True], inplace=True)
 	
@@ -727,7 +791,6 @@ def main() -> None:
 	except Exception as exc:
 		logging.error(f"Failed to write CSV file: {exc}")
 	
-	# --- Generate HTML Report (if enabled) ---
 	html_filename = ""
 	if generate_html:
 		logging.info("Generating HTML report...")
@@ -735,22 +798,21 @@ def main() -> None:
 		
 		if html_filename:
 			try:
-				# Convert to absolute path for browser
 				abs_html_path = os.path.abspath(html_filename)
 				webbrowser.open(f"file://{abs_html_path}")
 				logging.info(f"Opened HTML report in default browser: {html_filename}")
-				print(f"\n🌐 HTML report opened in your default browser!")
-				print(f"📄 CSV file: {os.path.abspath(output_filename)}")
-				print(f"🎨 HTML report: {os.path.abspath(html_filename)}")
+				print(f"\nHTML report opened in your default browser!")
+				print(f"CSV file: {os.path.abspath(output_filename)}")
+				print(f"HTML report: {os.path.abspath(html_filename)}")
 			except Exception as exc:
 				logging.warning(f"Could not open browser automatically: {exc}")
-				print(f"\n📄 Files generated:")
-				print(f"  • CSV: {os.path.abspath(output_filename)}")
-				print(f"  • HTML: {os.path.abspath(html_filename)}")
-				print(f"💡 Open {html_filename} in your browser to view the visual report!")
+				print(f"\nFiles generated:")
+				print(f"  - CSV: {os.path.abspath(output_filename)}")
+				print(f"  - HTML: {os.path.abspath(html_filename)}")
+				print(f"Open {html_filename} in your browser to view the visual report!")
 	else:
-		print(f"\n📄 CSV file generated: {os.path.abspath(output_filename)}")
-		print(f"💡 HTML report generation was disabled. Enable it in settings if you want visual reports.")
+		print(f"\nCSV file generated: {os.path.abspath(output_filename)}")
+		print(f"HTML report generation was disabled. Enable it in settings if you want visual reports.")
 	
 	logging.info("Order fulfillment process complete.")
 
