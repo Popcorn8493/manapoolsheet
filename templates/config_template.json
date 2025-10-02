@@ -1,0 +1,24 @@
+{
+  "browser": {
+    "default_browser": "firefox",
+    "auto_open": true,
+    "browser_options": {
+      "edge": {
+        "executable": "msedge.exe",
+        "command": "start msedge"
+      },
+      "chrome": {
+        "executable": "chrome.exe",
+        "command": "start chrome"
+      },
+      "firefox": {
+        "executable": "firefox.exe",
+        "command": "start firefox"
+      },
+      "default": {
+        "executable": "",
+        "command": "start"
+      }
+    }
+  }
+}

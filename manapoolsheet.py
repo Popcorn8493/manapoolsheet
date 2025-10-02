@@ -5,16 +5,23 @@ import time
 import os
 import glob
 import argparse
+import webbrowser
+import subprocess
+import platform
 from urllib.parse import urlparse
 from typing import Dict, List, Optional, Callable, Any
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 
 
 # Constants
 CACHE_DIR = "card_images"
 DRAWER_FILE = "inventory_locations.json"
 TEMPLATE_FILE = "templates/html_template_manapoolsheet.html"
+CSV_OUTPUT_DIR = "csv_reports"
+HTML_OUTPUT_DIR = "html_reports"
+CONFIG_FILE = "config.json"
 
 CSV_FIELDS = {
     'card_name': 'Card Name',
@@ -71,20 +78,55 @@ class Card:
     price: str
 
 
+def get_downloads_folder() -> str:
+    """Get the Downloads folder path."""
+    home = Path.home()
+
+    # Check common Downloads folder locations
+    downloads_paths = [
+        home / "Downloads",
+        home / "downloads",  # Linux sometimes uses lowercase
+        Path(os.path.expanduser("~/Downloads")),
+        Path(os.path.expanduser("~/downloads")),
+    ]
+
+    # Windows default Downloads location
+    if os.name == 'nt':  # Windows
+        downloads_paths.extend([
+            Path(os.path.expanduser("~/Downloads")),
+            Path(os.path.expanduser("~/downloads")),
+        ])
+
+    for path in downloads_paths:
+        if path.exists() and path.is_dir():
+            return str(path)
+
+    # Fallback to home directory if Downloads not found
+    return str(home)
+
+
 def find_most_recent_shipstation_file() -> Optional[str]:
+    """Find the most recent ShipStation CSV file."""
+    downloads_folder = get_downloads_folder()
+    print(f"Searching for ShipStation files in: {downloads_folder}")
+
     all_files = []
     for pattern in SHIPSTATION_PATTERNS:
-        all_files.extend(glob.glob(pattern))
+        search_path = os.path.join(downloads_folder, pattern)
+        all_files.extend(glob.glob(search_path))
 
     if not all_files:
+        print("No ShipStation files found in Downloads folder")
         return None
 
     most_recent = max(all_files, key=os.path.getmtime)
+    print(f"Found {len(all_files)} ShipStation files, using most recent: "
+          f"{os.path.basename(most_recent)}")
     return most_recent
 
 
 def parse_price(price_str: str) -> float:
-    """Parse price string to float, handling $ and comma formatting."""
+    """Parse price string to float."""
     try:
         if price_str and price_str != 'N/A':
             return float(price_str.replace('$', '').replace(',', ''))
@@ -102,7 +144,7 @@ def parse_quantity(quantity_str: str) -> int:
 
 
 def sanitize_for_filename(text: str) -> str:
-    """Sanitize text for use in filenames."""
+    """Sanitize text for filenames."""
     safe_text = "".join(
         c for c in text if c.isalnum() or c in (' ', '-', '_')
     ).rstrip()
@@ -110,7 +152,7 @@ def sanitize_for_filename(text: str) -> str:
 
 
 def infer_file_extension(image_url: str) -> str:
-    """Infer file extension from URL, defaulting to .jpg."""
+    """Infer file extension from URL."""
     parsed_url = urlparse(image_url)
     return os.path.splitext(parsed_url.path)[1] or '.jpg'
 
@@ -118,7 +160,7 @@ def infer_file_extension(image_url: str) -> str:
 def build_scryfall_queries(card_name: str, set_code: str,
                            collector_number: Optional[str] = None
                            ) -> List[str]:
-    """Build list of Scryfall search queries for a card."""
+    """Build Scryfall search queries for a card."""
     clean_name = card_name.replace('"', '').replace('\n', ' ').replace(
         '\r', ' ').strip()
 
@@ -136,7 +178,7 @@ def build_scryfall_queries(card_name: str, set_code: str,
 
 
 def create_sort_key_factory(sort_field: str) -> Callable[[Card], Any]:
-    """Create a sort key function for the given field."""
+    """Create sort key function for field."""
     def get_sort_key(card: Card):
         if sort_field == 'location':
             return card.location
@@ -160,9 +202,105 @@ def load_drawer_mapping(json_file: str) -> Dict[str, str]:
         return data.get('drawer_mapping', {})
 
 
+def load_browser_config(config_file: str = CONFIG_FILE) -> Dict[str, Any]:
+    """Load browser configuration."""
+    try:
+        with open(config_file, 'r', encoding='utf-8') as file:
+            data = json.load(file)
+            return data.get('browser', {})
+    except FileNotFoundError:
+        print(f"Warning: Config file {config_file} not found. "
+              f"Using default browser settings.")
+        return {
+            'default_browser': 'edge',
+            'auto_open': True,
+            'browser_options': {}
+        }
+    except json.JSONDecodeError as e:
+        print(f"Warning: Error parsing config file {config_file}: {e}. "
+              f"Using default settings.")
+        return {
+            'default_browser': 'edge',
+            'auto_open': True,
+            'browser_options': {}
+        }
+
+
+def open_html_in_browser(html_file: str, browser: str = 'edge',
+                         auto_open: bool = True) -> bool:
+    """Open HTML file in browser."""
+    if not auto_open:
+        print(f"Auto-open disabled. HTML report available at: {html_file}")
+        return False
+
+    if not os.path.exists(html_file):
+        print(f"Error: HTML file {html_file} not found!")
+        return False
+
+    try:
+        # Convert to absolute path for better compatibility
+        abs_path = os.path.abspath(html_file)
+        file_url = f"file:///{abs_path.replace(os.sep, '/')}"
+
+        if browser.lower() == 'edge':
+            # Open with Microsoft Edge
+            try:
+                if platform.system() == "Windows":
+                    subprocess.run(['start', 'msedge', file_url],
+                                   check=True, shell=True)
+                else:
+                    subprocess.run(['msedge', file_url], check=True)
+                print(f"Opened HTML report in Microsoft Edge: {html_file}")
+                return True
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                print("Microsoft Edge not found, falling back to "
+                      "default browser...")
+                webbrowser.open(file_url)
+                print(f"Opened HTML report in default browser: {html_file}")
+                return True
+        elif browser.lower() == 'chrome':
+            try:
+                if platform.system() == "Windows":
+                    subprocess.run(['start', 'chrome', file_url],
+                                   check=True, shell=True)
+                else:
+                    subprocess.run(['google-chrome', file_url], check=True)
+                print(f"Opened HTML report in Chrome: {html_file}")
+                return True
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                print("Chrome not found, falling back to default browser...")
+                webbrowser.open(file_url)
+                print(f"Opened HTML report in default browser: {html_file}")
+                return True
+        elif browser.lower() == 'firefox':
+            try:
+                if platform.system() == "Windows":
+                    subprocess.run(['start', 'firefox', file_url],
+                                   check=True, shell=True)
+                else:
+                    subprocess.run(['firefox', file_url], check=True)
+                print(f"Opened HTML report in Firefox: {html_file}")
+                return True
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                print("Firefox not found, falling back to default browser...")
+                webbrowser.open(file_url)
+                print(f"Opened HTML report in default browser: {html_file}")
+                return True
+        else:
+            # Use default browser
+            webbrowser.open(file_url)
+            print(f"Opened HTML report in default browser: {html_file}")
+            return True
+
+    except Exception as e:
+        print(f"Error opening browser: {e}")
+        print(f"HTML report available at: {html_file}")
+        return False
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser(
-        description='Generate card inventory reports with sorting options')
+        description='Generate card inventory reports')
     parser.add_argument(
         '--sort-by',
         choices=['location', 'set', 'name', 'condition', 'rarity', 'price'],
@@ -187,6 +325,14 @@ def parse_arguments():
         '--clean-reports',
         action='store_true',
         help='Delete all but the most recent CSV and HTML reports')
+    parser.add_argument(
+        '--browser',
+        choices=['edge', 'chrome', 'firefox', 'default'],
+        help='Browser to open HTML report in (overrides config file)')
+    parser.add_argument(
+        '--no-open',
+        action='store_true',
+        help='Do not automatically open HTML report in browser')
     return parser.parse_args()
 
 
@@ -369,8 +515,12 @@ def cleanup_old_cache():
 
 
 def cleanup_old_reports():
-    csv_files = glob.glob(REPORT_PATTERNS['csv'])
-    html_files = glob.glob(REPORT_PATTERNS['html'])
+    # Find files in output directories
+    csv_pattern = os.path.join(CSV_OUTPUT_DIR, "card_inventory_report_*.csv")
+    html_pattern = os.path.join(HTML_OUTPUT_DIR, "manapoolshoot_*.html")
+
+    csv_files = glob.glob(csv_pattern)
+    html_files = glob.glob(html_pattern)
 
     csv_files.sort(key=os.path.getmtime, reverse=True)
     html_files.sort(key=os.path.getmtime, reverse=True)
@@ -455,7 +605,7 @@ def load_html_template(template_file: str = TEMPLATE_FILE
 
 
 def render_card_html(card: Card) -> str:
-    """Render HTML for a single card."""
+    """Render HTML for card."""
     if card.image_url:
         image_html = (f'<div class="card-image-container">'
                       f'<img src="{card.image_url}" '
@@ -467,7 +617,7 @@ def render_card_html(card: Card) -> str:
     highlight_classes = get_card_highlight_classes(card)
     card_classes = f"card-item {highlight_classes}".strip()
 
-    # Fix malformed checkbox id (preserve behavior but make valid HTML)
+    # Create safe checkbox ID
     safe_id = f"card_{card.name.replace(' ', '_')}_{card.set_code}"
 
     return f"""
@@ -498,7 +648,7 @@ def render_card_html(card: Card) -> str:
 
 
 def render_location_section(location: str, cards: List[Card]) -> str:
-    """Render HTML for a location section with its cards."""
+    """Render HTML for location section."""
     location_section = f"""
         <div class="location-section">
             <h2 class="location-header">{location}</h2>
@@ -571,9 +721,23 @@ def main():
 
     args = parse_arguments()
 
+    # Load browser configuration
+    browser_config = load_browser_config()
+
+    # Determine browser settings (command line args override config)
+    browser = (args.browser if args.browser
+               else browser_config.get('default_browser', 'edge'))
+    auto_open = not args.no_open and browser_config.get('auto_open', True)
+
+    # Create output directories
+    os.makedirs(CSV_OUTPUT_DIR, exist_ok=True)
+    os.makedirs(HTML_OUTPUT_DIR, exist_ok=True)
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_output_file = f"card_inventory_report_{timestamp}.csv"
-    html_output_file = f"manapoolshoot_{timestamp}.html"
+    csv_output_file = os.path.join(
+        CSV_OUTPUT_DIR, f"card_inventory_report_{timestamp}.csv")
+    html_output_file = os.path.join(
+        HTML_OUTPUT_DIR, f"manapoolshoot_{timestamp}.html")
 
     if not os.path.exists(DRAWER_FILE):
         print(f"Error: {DRAWER_FILE} not found!")
@@ -583,7 +747,7 @@ def main():
     shipstation_file = find_most_recent_shipstation_file()
 
     if not shipstation_file:
-        print("Error: No ShipStation CSV files found!")
+        print("Error: No ShipStation CSV files found in Downloads folder!")
         print("Looking for files matching: shipstation_orders*.csv, "
               "shipstation*.csv, *shipstation*.csv")
         return
@@ -624,6 +788,17 @@ def main():
     print(f"- CSV: {csv_output_file}")
     print(f"- HTML: {html_output_file}")
     print(f"- Images cached in: {CACHE_DIR}/")
+    print(f"- CSV reports directory: {CSV_OUTPUT_DIR}/")
+    print(f"- HTML reports directory: {HTML_OUTPUT_DIR}/")
+
+    # Open HTML report in browser
+    if auto_open:
+        print(f"\nOpening HTML report in {browser}...")
+        open_html_in_browser(html_output_file, browser, auto_open)
+    else:
+        print(f"\nHTML report available at: {html_output_file}")
+        print("Use --browser <browser> to specify a browser or "
+              "remove --no-open to auto-open")
 
 
 if __name__ == "__main__":

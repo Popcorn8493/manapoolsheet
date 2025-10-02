@@ -1,41 +1,33 @@
 {
   "drawer_mapping": {
-    "LTR": "Drawer A",
-    "IKO": "Drawer B",
-    "MB2": "Drawer C",
-    "MKM": "Drawer D",
-    "OTC": "Drawer E",
-    "PLST": "Drawer F",
-    "CLB": "Drawer G",
-    "MH3": "Drawer H",
-    "MIC": "Drawer I",
-    "BLB": "Drawer J",
-    "AFC": "Drawer K",
-    "LCC": "Drawer L"
+    "DSK": "Drawer 6",
+    "IKO": "Drawer 11",
+    "TDC": "Drawer 12",
+    "BRC": "Drawer 13",
+    "LTR": "Drawer 14",
+    "C20": "Drawer 15",
+    "M3C": "Drawer 16",
+    "MKM": "Drawer 17",
+    "PIP": "Drawer 18",
+    "OTC": "Drawer 19",
+    "PLST": "Drawer 20",
+    "OTP": "Drawer 21",
+    "DSC": "Drawer 6",
+    "INR": "Drawer 11",
+    "TDM": "Drawer 12",
+    "BRR": "Drawer 13",
+    "LTC": "Drawer 14",
+    "CLB": "Drawer 15",
+    "MH3": "Drawer 16",
+    "MKC": "Drawer 17",
+    "OTJ": "Drawer 19",
+    "Silver Border": "Drawer 20",
+    "FART Lands": "Drawer 21"
   },
   "metadata": {
-    "description": "Card set code to drawer mapping for inventory management",
+    "description": "Example card set code to drawer mapping for inventory management",
     "created": "2024-01-01",
     "version": "1.0",
-    "instructions": [
-      "Replace the example set codes with your actual Magic: The Gathering set codes",
-      "Update drawer names to match your physical storage locations",
-      "Add or remove entries as needed for your collection",
-      "Set codes should match exactly what appears in your ShipStation CSV files"
-    ],
-    "common_set_codes": [
-      "LTR - Lord of the Rings: Tales of Middle-earth",
-      "IKO - Ikoria: Lair of Behemoths", 
-      "MB2 - March of the Machine: The Aftermath",
-      "MKM - Murders at Karlov Manor",
-      "OTC - Outlaws of Thunder Junction",
-      "PLST - Play Booster",
-      "CLB - Commander Legends: Battle for Baldur's Gate",
-      "MH3 - Modern Horizons 3",
-      "MIC - Modern Horizons 2",
-      "BLB - Bloomburrow",
-      "AFC - Assassin's Creed",
-      "LCC - Lost Caverns of Ixalan"
-    ]
+    "note": "This is a template - customize with your actual drawer locations"
   }
 }
