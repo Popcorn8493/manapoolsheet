@@ -11,6 +11,9 @@ Process Magic: The Gathering card inventory from ShipStation CSV files. Generate
 - Interactive HTML with collapsible sections and checkboxes
 - Auto-opens HTML reports in browser (configurable)
 
+<img width="1050" height="550" alt="image" src="https://github.com/user-attachments/assets/08937009-06ae-42bc-a87e-5bc2d4a8066a" />
+
+
 ## Setup
 
 ### Prerequisites
