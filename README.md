@@ -142,6 +142,10 @@ python manapoolsheet.py --sort-by name --order asc
 # Sort by price, descending
 python manapoolsheet.py --sort-by price --order desc
 
+# Sort by color, type, name
+
+python manapoolsheet.py --sort-by color --secondary-sort card_type --tertiary-sort name --order asc
+
 # Sort by set, then by name
 python manapoolsheet.py --sort-by set --secondary-sort name
 
@@ -154,6 +158,7 @@ python manapoolsheet.py --no-open
 # Clean up old reports
 python manapoolsheet.py --clean-reports
 ```
+
 
 ### Output Files
 
