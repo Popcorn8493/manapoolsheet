@@ -64,6 +64,8 @@ class Card:
     location: str
     image_url: str
     price: str
+    card_type: str = ""
+    colors: str = ""
 
 
 def get_downloads_folder() -> str:
@@ -151,6 +153,14 @@ def build_scryfall_queries(
         ]
 
 
+def format_colors_for_sorting(colors: List[str]) -> str:
+    if not colors:
+        return ""
+    color_order = {"W": 0, "U": 1, "B": 2, "R": 3, "G": 4}
+    sorted_colors = sorted(colors, key=lambda c: color_order.get(c, 99))
+    return "".join(sorted_colors)
+
+
 def create_sort_key_factory(sort_field: str) -> Callable[[Card], Any]:
 
     def get_sort_key(card: Card):
@@ -166,6 +176,10 @@ def create_sort_key_factory(sort_field: str) -> Callable[[Card], Any]:
             return card.rarity
         elif sort_field == "price":
             return parse_price(card.price)
+        elif sort_field == "card_type":
+            return card.card_type.lower() if card.card_type else ""
+        elif sort_field == "color":
+            return card.colors if card.colors else "ZZZ"
         return ""
 
     return get_sort_key
@@ -355,6 +369,8 @@ def sort_cards(
     order: str,
     secondary_sort: Optional[str] = None,
     secondary_order: str = "asc",
+    tertiary_sort: Optional[str] = None,
+    tertiary_order: str = "asc",
 ) -> List[Card]:
     from collections import Counter
 
@@ -362,6 +378,7 @@ def sort_cards(
     get_secondary_key = (
         create_sort_key_factory(secondary_sort) if secondary_sort else None
     )
+    get_tertiary_key = create_sort_key_factory(tertiary_sort) if tertiary_sort else None
     if sort_by == "location":
         location_counts = Counter((card.location for card in cards))
 
@@ -369,7 +386,16 @@ def sort_cards(
             return location_counts[card.location]
 
         reverse = order == "desc"
-        if secondary_sort and get_secondary_key:
+        if tertiary_sort and get_tertiary_key and secondary_sort and get_secondary_key:
+            cards.sort(
+                key=lambda x: (
+                    get_location_count(x),
+                    get_secondary_key(x),
+                    get_tertiary_key(x),
+                ),
+                reverse=reverse,
+            )
+        elif secondary_sort and get_secondary_key:
             cards.sort(
                 key=lambda x: (get_location_count(x), get_secondary_key(x)),
                 reverse=reverse,
@@ -378,7 +404,16 @@ def sort_cards(
             cards.sort(key=get_location_count, reverse=reverse)
     else:
         reverse = order == "desc"
-        if secondary_sort and get_secondary_key:
+        if tertiary_sort and get_tertiary_key and secondary_sort and get_secondary_key:
+            cards.sort(
+                key=lambda x: (
+                    get_sort_key(x),
+                    get_secondary_key(x),
+                    get_tertiary_key(x),
+                ),
+                reverse=reverse,
+            )
+        elif secondary_sort and get_secondary_key:
             cards.sort(
                 key=lambda x: (get_sort_key(x), get_secondary_key(x)), reverse=reverse
             )
@@ -415,9 +450,9 @@ def download_and_cache_image(
         return None
 
 
-def get_card_image_url(
+def get_card_data_from_scryfall(
     card_name: str, set_code: str, collector_number: Optional[str] = None
-) -> Optional[str]:
+) -> tuple[Optional[str], str, str]:
     try:
         search_queries = build_scryfall_queries(card_name, set_code, collector_number)
         for query in search_queries:
@@ -437,8 +472,11 @@ def get_card_image_url(
                         or image_uris.get("normal")
                         or image_uris.get("small")
                     )
+                    card_type = card.get("type_line", "")
+                    colors_list = card.get("colors", [])
+                    colors = format_colors_for_sorting(colors_list)
                     if image_url:
-                        return image_url
+                        return (image_url, card_type, colors)
             except requests.exceptions.HTTPError as e:
                 if e.response.status_code == 404:
                     continue
@@ -446,10 +484,17 @@ def get_card_image_url(
                     raise
             except Exception:
                 continue
-        return None
+        return (None, "", "")
     except Exception as e:
-        print(f"Error fetching image for {card_name} ({set_code}): {e}")
-        return None
+        print(f"Error fetching card data for {card_name} ({set_code}): {e}")
+        return (None, "", "")
+
+
+def get_card_image_url(
+    card_name: str, set_code: str, collector_number: Optional[str] = None
+) -> Optional[str]:
+    image_url, _, _ = get_card_data_from_scryfall(card_name, set_code, collector_number)
+    return image_url
 
 
 def process_shipstation_data(
@@ -471,8 +516,10 @@ def process_shipstation_data(
             finish = row.get(CSV_FIELDS["finish"], "")
             price = row.get(CSV_FIELDS["unit_price"], "")
             location = drawer_mapping.get(set_code, "Unknown")
-            print(f"Fetching image for {card_name} ({set_code})...")
-            image_url = get_card_image_url(card_name, set_code, collector_number)
+            print(f"Fetching card data for {card_name} ({set_code})...")
+            image_url, card_type, colors = get_card_data_from_scryfall(
+                card_name, set_code, collector_number
+            )
             cached_image_path = (
                 download_and_cache_image(image_url, card_name, set_code)
                 if image_url
@@ -490,6 +537,8 @@ def process_shipstation_data(
                 location=location,
                 image_url=cached_image_path or image_url or "",
                 price=price,
+                card_type=card_type,
+                colors=colors,
             )
             cards.append(card)
             time.sleep(IMAGE_DOWNLOAD_DELAY)
@@ -703,8 +752,16 @@ def main():
     print(f"Sorting cards by {args.sort_by} ({args.order})...")
     if args.secondary_sort:
         print(f"Secondary sort by {args.secondary_sort} ({args.secondary_order})...")
+    if args.tertiary_sort:
+        print(f"Tertiary sort by {args.tertiary_sort} ({args.tertiary_order})...")
     cards = sort_cards(
-        cards, args.sort_by, args.order, args.secondary_sort, args.secondary_order
+        cards,
+        args.sort_by,
+        args.order,
+        args.secondary_sort,
+        args.secondary_order,
+        args.tertiary_sort,
+        args.tertiary_order,
     )
     print("Generating CSV report...")
     generate_csv_report(cards, csv_output_file)
