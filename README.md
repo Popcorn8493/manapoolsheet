@@ -6,7 +6,7 @@ Process Magic: The Gathering card inventory from ShipStation CSV files. Generate
 
 - Fetches card images from Scryfall API
 - Maps card sets to physical storage locations
-- Sort by location, set, name, condition, rarity, or price
+- Multi-level sorting (primary, secondary, tertiary)
 - Generates CSV and interactive HTML reports
 - Interactive HTML with collapsible sections and checkboxes
 - Auto-opens HTML reports in browser (configurable)
@@ -38,11 +38,13 @@ Process Magic: The Gathering card inventory from ShipStation CSV files. Generate
 
 ### Required Files
 
-1. **ShipStation CSV**: Place in project directory. Tool finds files matching:
+1. **ShipStation CSV**: Tool automatically searches your Downloads folder for files matching:
 
    - `shipstation_orders*.csv`
    - `shipstation*.csv`
    - `*shipstation*.csv`
+
+   Uses the most recent file found.
 
 2. **Drawer Inventory JSON** (`inventory_locations.json`):
 
@@ -60,30 +62,19 @@ Process Magic: The Gathering card inventory from ShipStation CSV files. Generate
 4. **Inventory Locations Template** (`templates/inventory_locations_template.json`): Template for drawer mapping
 5. **Browser Configuration** (`config.json`): Auto-created with default settings
 
-### Using the Inventory Template
+### Setup Inventory Mapping
 
-Copy the template to create your inventory mapping:
+Copy the template and edit with your set codes and drawer locations:
 
 ```bash
 cp templates/inventory_locations_template.json inventory_locations.json
 ```
 
-Then edit `inventory_locations.json` with your actual set codes and drawer locations.
-
 ## Browser Configuration
 
-The tool automatically opens HTML reports in your browser. You can configure this behavior:
+The tool automatically opens HTML reports in your browser. Configure via `config.json` (auto-created) or command line:
 
-### Default Settings
-
-- **Default Browser**: Microsoft Edge
-- **Auto-Open**: Enabled
-- **Config File**: `config.json` (auto-created)
-
-### Configuration Options
-
-Edit `config.json` to change browser settings:
-
+**Config file** (`config.json`):
 ```json
 {
   "browser": {
@@ -93,21 +84,11 @@ Edit `config.json` to change browser settings:
 }
 ```
 
-**Supported Browsers**: `edge`, `chrome`, `firefox`, `default`
+**Supported browsers**: `edge`, `chrome`, `firefox`, `default`
 
-### Command Line Override
-
-Override config settings via command line:
-
+**Command line override**:
 ```bash
-# Use specific browser
-python manapoolsheet.py --browser chrome
-
-# Disable auto-opening
-python manapoolsheet.py --no-open
-
-# Use Firefox and disable auto-open
-python manapoolsheet.py --browser firefox --no-open
+python manapoolsheet.py --browser chrome --no-open
 ```
 
 ## Usage
@@ -120,20 +101,23 @@ python manapoolsheet.py
 
 ### Command Line Options
 
-| Flag                | Description             | Choices                                                   | Default     |
-| ------------------- | ----------------------- | --------------------------------------------------------- | ----------- |
-| `--sort-by`         | Primary sort field      | `location`, `set`, `name`, `condition`, `rarity`, `price` | `location`  |
-| `--order`           | Sort order              | `asc`, `desc`                                             | `asc`       |
-| `--secondary-sort`  | Secondary sort field    | Same as `--sort-by`                                       | None        |
-| `--secondary-order` | Secondary sort order    | `asc`, `desc`                                             | `asc`       |
-| `--browser`         | Browser for HTML report | `edge`, `chrome`, `firefox`, `default`                    | From config |
-| `--no-open`         | Disable auto-opening    | -                                                         | -           |
-| `--clean-reports`   | Delete old reports      | -                                                         | -           |
+| Flag                | Description                    | Choices                                                                              | Default     |
+| ------------------- | ------------------------------ | ------------------------------------------------------------------------------------ | ----------- |
+| `--sort-by`         | Primary sort field             | `location`, `set`, `name`, `condition`, `rarity`, `price`, `card_type`, `color`      | `location`  |
+| `--order`           | Primary sort order             | `asc`, `desc`                                                                        | `desc`      |
+| `--secondary-sort`  | Secondary sort field           | Same as `--sort-by`                                                                  | None        |
+| `--secondary-order` | Secondary sort order           | `asc`, `desc`                                                                        | `asc`       |
+| `--tertiary-sort`   | Tertiary sort field            | Same as `--sort-by`                                                                  | None        |
+| `--tertiary-order`  | Tertiary sort order            | `asc`, `desc`                                                                        | `asc`       |
+| `--browser`         | Browser for HTML report        | `edge`, `chrome`, `firefox`, `default`                                               | From config |
+| `--no-open`         | Disable auto-opening           | -                                                                                    | -           |
+| `--clean-reports`   | Delete old reports             | -                                                                                    | -           |
+| `--lionseye-export` | Generate Lion's Eye CSV export | -                                                                                    | -           |
 
 ### Examples
 
 ```bash
-# Basic usage (opens in Edge by default)
+# Basic usage (sorts by location descending, opens in Edge)
 python manapoolsheet.py
 
 # Sort by name, ascending
@@ -142,12 +126,14 @@ python manapoolsheet.py --sort-by name --order asc
 # Sort by price, descending
 python manapoolsheet.py --sort-by price --order desc
 
-# Sort by color, type, name
-
+# Multi-level sort: color → card type → name
 python manapoolsheet.py --sort-by color --secondary-sort card_type --tertiary-sort name --order asc
 
 # Sort by set, then by name
 python manapoolsheet.py --sort-by set --secondary-sort name
+
+# Generate Lion's Eye export for inventory updates
+python manapoolsheet.py --lionseye-export
 
 # Open in Chrome
 python manapoolsheet.py --browser chrome
@@ -155,16 +141,17 @@ python manapoolsheet.py --browser chrome
 # Disable auto-opening
 python manapoolsheet.py --no-open
 
-# Clean up old reports
+# Clean up old reports (keeps most recent)
 python manapoolsheet.py --clean-reports
 ```
 
 
 ### Output Files
 
-- **CSV**: `card_inventory_report_YYYYMMDD_HHMMSS.csv`
-- **HTML**: `manapoolshoot_YYYYMMDD_HHMMSS.html`
-- **Images**: `card_images/` directory
+- **CSV Report**: `csv_reports/card_inventory_report_YYYYMMDD_HHMMSS.csv`
+- **HTML Report**: `html_reports/manapoolshoot_YYYYMMDD_HHMMSS.html`
+- **Lion's Eye Export**: `lionseye_exports/lionseye_export_YYYYMMDD_HHMMSS.csv` (with `--lionseye-export`)
+- **Card Images**: `card_images/` directory (cached for reuse)
 
 ## License
 

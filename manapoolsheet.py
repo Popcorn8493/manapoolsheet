@@ -399,21 +399,14 @@ def sort_cards(
     )
     get_tertiary_key = create_sort_key_factory(tertiary_sort) if tertiary_sort else None
 
-    # Use stable sorting: sort multiple times in reverse order of priority
-    # Each sort preserves the relative order from previous sorts
-
-    # Always sort by name first (lowest priority, so it's the final tiebreaker)
     cards.sort(key=lambda x: x.name.lower(), reverse=False)
 
-    # Tertiary sort (if specified)
     if tertiary_sort and get_tertiary_key:
         cards.sort(key=get_tertiary_key, reverse=(tertiary_order == "desc"))
 
-    # Secondary sort (if specified)
     if secondary_sort and get_secondary_key:
         cards.sort(key=get_secondary_key, reverse=(secondary_order == "desc"))
 
-    # Primary sort
     if sort_by == "location":
         location_counts = Counter((card.location for card in cards))
 
@@ -428,30 +421,35 @@ def sort_cards(
 
 
 def download_and_cache_image(
-    image_url: str, card_name: str, set_code: str
+    image_url: str, card_name: str, set_code: str, collector_number: str = ""
 ) -> Optional[str]:
     if not image_url:
         return None
     os.makedirs(CACHE_DIR, exist_ok=True)
     safe_name = sanitize_for_filename(card_name)
     safe_set = set_code.replace("/", "_")
+    safe_collector = sanitize_for_filename(collector_number) if collector_number else ""
     file_ext = infer_file_extension(image_url)
-    filename = f"{safe_name}_{safe_set}{file_ext}"
+    if safe_collector:
+        filename = f"{safe_name}_{safe_set}_{safe_collector}{file_ext}"
+    else:
+        filename = f"{safe_name}_{safe_set}{file_ext}"
     local_path = os.path.join(CACHE_DIR, filename)
     if os.path.exists(local_path):
-        print(f"Using cached image for {card_name} ({set_code})")
+        print(f"Using cached image for {card_name} ({set_code}" + (f" #{collector_number})" if collector_number else ")"))
         return local_path
     try:
-        print(f"Downloading image for {card_name} ({set_code})...")
+        print(f"Downloading image for {card_name} ({set_code}" + (f" #{collector_number})..." if collector_number else ")..."))
         session = get_session()
         response = session.get(image_url, timeout=SCRYFALL_TIMEOUT)
         response.raise_for_status()
         with open(local_path, "wb") as f:
             f.write(response.content)
-        print(f"Cached image for {card_name} ({set_code})")
+        print(f"Cached image for {card_name} ({set_code}" + (f" #{collector_number})" if collector_number else ")"))
         return local_path
     except Exception as e:
-        print(f"Error downloading image for {card_name} ({set_code}): {e}")
+        collector_info = f" #{collector_number}" if collector_number else ""
+        print(f"Error downloading image for {card_name} ({set_code}{collector_info}): {e}")
         return None
 
 
@@ -472,10 +470,8 @@ def get_card_data_from_scryfall(
                 if data.get("data") and len(data["data"]) > 0:
                     card = data["data"][0]
 
-                    # Try to get image from card level first
                     image_uris = card.get("image_uris", {})
 
-                    # If not found and card has faces (double-faced cards), use first face
                     if not image_uris and card.get("card_faces"):
                         image_uris = card["card_faces"][0].get("image_uris", {})
 
@@ -512,13 +508,25 @@ def get_card_image_url(
 
 def process_shipstation_data(
     input_file: str, drawer_mapping: Dict[str, str]
-) -> List[Card]:
+) -> tuple[List[Card], set[str]]:
     cards = []
+    unique_orders = set()
     with open(input_file, "r", encoding="utf-8") as file:
         reader = csv.DictReader(file)
         for row in reader:
             if not row.get(CSV_FIELDS["card_name"]):
                 continue
+            order_number = (
+                row.get("Order Number") or 
+                row.get("Order #") or 
+                row.get("Order ID") or 
+                row.get("OrderNumber") or
+                row.get("Order_Number") or
+                row.get("order_number") or
+                ""
+            )
+            if order_number:
+                unique_orders.add(str(order_number))
             set_code = row.get(CSV_FIELDS["set_code"], "")
             card_name = row.get(CSV_FIELDS["card_name"], "")
             collector_number = row.get(CSV_FIELDS["collector_number"], "")
@@ -534,7 +542,7 @@ def process_shipstation_data(
                 card_name, set_code, collector_number
             )
             cached_image_path = (
-                download_and_cache_image(image_url, card_name, set_code)
+                download_and_cache_image(image_url, card_name, set_code, collector_number)
                 if image_url
                 else None
             )
@@ -555,7 +563,7 @@ def process_shipstation_data(
             )
             cards.append(card)
             time.sleep(IMAGE_DOWNLOAD_DELAY)
-    return cards
+    return cards, unique_orders
 
 
 def cleanup_old_cache():
@@ -625,7 +633,6 @@ def generate_csv_report(cards: List[Card], output_file: str):
 
 
 def generate_lionseye_csv(input_file: str, output_file: str):
-    """Generate Lion's Eye CSV from ShipStation export for inventory updates."""
     lionseye_rows = []
 
     with open(input_file, "r", encoding="utf-8") as file:
@@ -646,23 +653,19 @@ def generate_lionseye_csv(input_file: str, output_file: str):
             except (ValueError, TypeError):
                 quantity = 1
 
-            # Convert language to language code
             language_code = LANGUAGE_MAPPING.get(language, "en")
 
-            # Determine foil vs non-foil
             finish_lower = finish.lower()
             if "non-foil" in finish_lower or "nonfoil" in finish_lower:
-                num_nonfoil = -quantity  # Negative for removal
+                num_nonfoil = -quantity
                 num_foil = 0
             elif "foil" in finish_lower or "etched" in finish_lower:
                 num_nonfoil = 0
-                num_foil = -quantity  # Negative for removal
+                num_foil = -quantity
             else:
-                # Default to non-foil if unclear
                 num_nonfoil = -quantity
                 num_foil = 0
 
-            # Fetch Scryfall ID
             print(f"Fetching Scryfall ID for {card_name} ({set_code})...")
             _, _, _, scryfall_id = get_card_data_from_scryfall(
                 card_name, set_code, collector_number
@@ -687,7 +690,6 @@ def generate_lionseye_csv(input_file: str, output_file: str):
 
             time.sleep(IMAGE_DOWNLOAD_DELAY)
 
-    # Write to CSV
     with open(output_file, "w", newline="", encoding="utf-8") as file:
         fieldnames = [
             "Name",
@@ -759,7 +761,6 @@ def render_card_html(card: Card) -> str:
 
 
 def get_group_display_value(card: Card, sort_field: str) -> str:
-    """Get the display value for grouping based on the sort field."""
     if sort_field == "location":
         return card.location
     elif sort_field == "set":
@@ -790,9 +791,7 @@ def get_group_display_value(card: Card, sort_field: str) -> str:
         type_line = card.card_type.lower() if card.card_type else ""
         if not type_line:
             return "Unknown"
-        # Extract primary type (before "—")
         primary_type = type_line.split("—")[0].strip()
-        # Get the main card type
         if "creature" in primary_type:
             return "Creature"
         elif "planeswalker" in primary_type:
@@ -830,8 +829,6 @@ def get_group_display_value(card: Card, sort_field: str) -> str:
 
 
 def render_subgroup_section(subgroup_name: str, cards: List[Card]) -> str:
-    """Render a sub-group within a primary group."""
-    # Sort cards alphabetically by name within this subgroup
     sorted_cards = sorted(cards, key=lambda x: x.name.lower())
 
     subgroup_html = f'\n                <div class="subgroup-section">\n                    <h3 class="subgroup-header">{subgroup_name}</h3>\n                    <div class="cards-grid">\n'
@@ -842,17 +839,14 @@ def render_subgroup_section(subgroup_name: str, cards: List[Card]) -> str:
 
 
 def render_location_section(location: str, cards: List[Card], secondary_sort: Optional[str] = None) -> str:
-    """Render a primary group section, optionally with sub-groups."""
     location_section = f'\n        <div class="location-section">\n            <h2 class="location-header">{location}</h2>\n            <div class="location-content">\n'
 
-    # If secondary sort is specified, create sub-groups
     if secondary_sort:
         subgrouped_cards: Dict[str, List[Card]] = defaultdict(list)
         for card in cards:
             subgroup_key = get_group_display_value(card, secondary_sort)
             subgrouped_cards[subgroup_key].append(card)
 
-        # Preserve order of sub-groups
         subgroup_order = []
         seen_subgroups = set()
         for card in cards:
@@ -861,12 +855,10 @@ def render_location_section(location: str, cards: List[Card], secondary_sort: Op
                 subgroup_order.append(subgroup)
                 seen_subgroups.add(subgroup)
 
-        # Render each sub-group
         for subgroup in subgroup_order:
             subgroup_cards = subgrouped_cards[subgroup]
             location_section += render_subgroup_section(subgroup, subgroup_cards)
     else:
-        # No sub-grouping, just render cards directly (sorted alphabetically by name)
         sorted_cards = sorted(cards, key=lambda x: x.name.lower())
         location_section += '\n                <div class="cards-grid">\n'
         for card in sorted_cards:
@@ -882,7 +874,8 @@ def generate_html_report(
     output_file: str,
     sort_by: str = "location",
     order: str = "asc",
-    secondary_sort: Optional[str] = None
+    secondary_sort: Optional[str] = None,
+    unique_orders_count: int = 0
 ):
     from datetime import datetime
 
@@ -890,13 +883,11 @@ def generate_html_report(
     if template is None:
         return
 
-    # Group cards by the primary sort field
     grouped_cards: Dict[str, List[Card]] = defaultdict(list)
     for card in cards:
         group_key = get_group_display_value(card, sort_by)
         grouped_cards[group_key].append(card)
 
-    # Preserve the order of groups as they appear in the sorted card list
     group_order = []
     seen_groups = set()
     for card in cards:
@@ -919,6 +910,7 @@ def generate_html_report(
     html_content = html_content.replace("{total_cards}", str(total_cards))
     html_content = html_content.replace("{unique_cards}", str(unique_cards))
     html_content = html_content.replace("{locations_count}", str(locations_count))
+    html_content = html_content.replace("{unique_orders}", str(unique_orders_count))
     html_content = html_content.replace("{location_sections}", location_sections_html)
     with open(output_file, "w", encoding="utf-8") as file:
         file.write(html_content)
@@ -941,7 +933,6 @@ def main():
     )
     html_output_file = os.path.join(HTML_OUTPUT_DIR, f"manapoolshoot_{timestamp}.html")
 
-    # Only create Lion's Eye directory and file if flag is set
     if args.lionseye_export:
         os.makedirs(LIONSEYE_OUTPUT_DIR, exist_ok=True)
         lionseye_output_file = os.path.join(
@@ -965,8 +956,9 @@ def main():
     print("Checking image cache...")
     cleanup_old_cache()
     print("Processing ShipStation data...")
-    cards = process_shipstation_data(shipstation_file, drawer_mapping)
+    cards, unique_orders = process_shipstation_data(shipstation_file, drawer_mapping)
     print(f"Processed {len(cards)} cards")
+    print(f"Found {len(unique_orders)} unique orders")
     print(f"Sorting cards by {args.sort_by} ({args.order})...")
     if args.secondary_sort:
         print(f"Secondary sort by {args.secondary_sort} ({args.secondary_order})...")
@@ -985,10 +977,9 @@ def main():
     generate_csv_report(cards, csv_output_file)
     print(f"CSV report generated: {csv_output_file}")
     print("Generating HTML report...")
-    generate_html_report(cards, html_output_file, args.sort_by, args.order, args.secondary_sort)
+    generate_html_report(cards, html_output_file, args.sort_by, args.order, args.secondary_sort, len(unique_orders))
     print(f"HTML report generated: {html_output_file}")
 
-    # Generate Lion's Eye export if flag is set
     if args.lionseye_export:
         print("\nGenerating Lion's Eye CSV export...")
         generate_lionseye_csv(shipstation_file, lionseye_output_file)
