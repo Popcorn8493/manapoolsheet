@@ -19,6 +19,7 @@ DRAWER_FILE = "inventory_locations.json"
 TEMPLATE_FILE = "templates/html_template_manapoolsheet.html"
 CSV_OUTPUT_DIR = "csv_reports"
 HTML_OUTPUT_DIR = "html_reports"
+LIONSEYE_OUTPUT_DIR = "lionseye_exports"
 CONFIG_FILE = "config.json"
 CSV_FIELDS = {
     "card_name": "Card Name",
@@ -41,6 +42,19 @@ SCRYFALL_BASE_URL = "https://api.scryfall.com/cards/search"
 REQUEST_TIMEOUT = 30
 SCRYFALL_TIMEOUT = 10
 IMAGE_DOWNLOAD_DELAY = 0.1
+LANGUAGE_MAPPING = {
+    "English": "en",
+    "Spanish": "es",
+    "French": "fr",
+    "German": "de",
+    "Italian": "it",
+    "Portuguese": "pt",
+    "Japanese": "ja",
+    "Korean": "ko",
+    "Russian": "ru",
+    "Chinese Simplified": "zhs",
+    "Chinese Traditional": "zht",
+}
 _session = None
 
 
@@ -360,6 +374,11 @@ def parse_arguments():
         action="store_true",
         help="Do not automatically open HTML report in browser",
     )
+    parser.add_argument(
+        "--lionseye-export",
+        action="store_true",
+        help="Generate Lion's Eye CSV export for inventory updates (negative quantities)",
+    )
     return parser.parse_args()
 
 
@@ -379,46 +398,32 @@ def sort_cards(
         create_sort_key_factory(secondary_sort) if secondary_sort else None
     )
     get_tertiary_key = create_sort_key_factory(tertiary_sort) if tertiary_sort else None
+
+    # Use stable sorting: sort multiple times in reverse order of priority
+    # Each sort preserves the relative order from previous sorts
+
+    # Always sort by name first (lowest priority, so it's the final tiebreaker)
+    cards.sort(key=lambda x: x.name.lower(), reverse=False)
+
+    # Tertiary sort (if specified)
+    if tertiary_sort and get_tertiary_key:
+        cards.sort(key=get_tertiary_key, reverse=(tertiary_order == "desc"))
+
+    # Secondary sort (if specified)
+    if secondary_sort and get_secondary_key:
+        cards.sort(key=get_secondary_key, reverse=(secondary_order == "desc"))
+
+    # Primary sort
     if sort_by == "location":
         location_counts = Counter((card.location for card in cards))
 
         def get_location_count(card):
             return location_counts[card.location]
 
-        reverse = order == "desc"
-        if tertiary_sort and get_tertiary_key and secondary_sort and get_secondary_key:
-            cards.sort(
-                key=lambda x: (
-                    get_location_count(x),
-                    get_secondary_key(x),
-                    get_tertiary_key(x),
-                ),
-                reverse=reverse,
-            )
-        elif secondary_sort and get_secondary_key:
-            cards.sort(
-                key=lambda x: (get_location_count(x), get_secondary_key(x)),
-                reverse=reverse,
-            )
-        else:
-            cards.sort(key=get_location_count, reverse=reverse)
+        cards.sort(key=get_location_count, reverse=(order == "desc"))
     else:
-        reverse = order == "desc"
-        if tertiary_sort and get_tertiary_key and secondary_sort and get_secondary_key:
-            cards.sort(
-                key=lambda x: (
-                    get_sort_key(x),
-                    get_secondary_key(x),
-                    get_tertiary_key(x),
-                ),
-                reverse=reverse,
-            )
-        elif secondary_sort and get_secondary_key:
-            cards.sort(
-                key=lambda x: (get_sort_key(x), get_secondary_key(x)), reverse=reverse
-            )
-        else:
-            cards.sort(key=get_sort_key, reverse=reverse)
+        cards.sort(key=get_sort_key, reverse=(order == "desc"))
+
     return cards
 
 
@@ -452,7 +457,7 @@ def download_and_cache_image(
 
 def get_card_data_from_scryfall(
     card_name: str, set_code: str, collector_number: Optional[str] = None
-) -> tuple[Optional[str], str, str]:
+) -> tuple[Optional[str], str, str, str]:
     try:
         search_queries = build_scryfall_queries(card_name, set_code, collector_number)
         for query in search_queries:
@@ -466,7 +471,14 @@ def get_card_data_from_scryfall(
                 data = response.json()
                 if data.get("data") and len(data["data"]) > 0:
                     card = data["data"][0]
+
+                    # Try to get image from card level first
                     image_uris = card.get("image_uris", {})
+
+                    # If not found and card has faces (double-faced cards), use first face
+                    if not image_uris and card.get("card_faces"):
+                        image_uris = card["card_faces"][0].get("image_uris", {})
+
                     image_url = (
                         image_uris.get("large")
                         or image_uris.get("normal")
@@ -475,8 +487,9 @@ def get_card_data_from_scryfall(
                     card_type = card.get("type_line", "")
                     colors_list = card.get("colors", [])
                     colors = format_colors_for_sorting(colors_list)
+                    scryfall_id = card.get("id", "")
                     if image_url:
-                        return (image_url, card_type, colors)
+                        return (image_url, card_type, colors, scryfall_id)
             except requests.exceptions.HTTPError as e:
                 if e.response.status_code == 404:
                     continue
@@ -484,16 +497,16 @@ def get_card_data_from_scryfall(
                     raise
             except Exception:
                 continue
-        return (None, "", "")
+        return (None, "", "", "")
     except Exception as e:
         print(f"Error fetching card data for {card_name} ({set_code}): {e}")
-        return (None, "", "")
+        return (None, "", "", "")
 
 
 def get_card_image_url(
     card_name: str, set_code: str, collector_number: Optional[str] = None
 ) -> Optional[str]:
-    image_url, _, _ = get_card_data_from_scryfall(card_name, set_code, collector_number)
+    image_url, _, _, _ = get_card_data_from_scryfall(card_name, set_code, collector_number)
     return image_url
 
 
@@ -517,7 +530,7 @@ def process_shipstation_data(
             price = row.get(CSV_FIELDS["unit_price"], "")
             location = drawer_mapping.get(set_code, "Unknown")
             print(f"Fetching card data for {card_name} ({set_code})...")
-            image_url, card_type, colors = get_card_data_from_scryfall(
+            image_url, card_type, colors, _ = get_card_data_from_scryfall(
                 card_name, set_code, collector_number
             )
             cached_image_path = (
@@ -611,6 +624,86 @@ def generate_csv_report(cards: List[Card], output_file: str):
             )
 
 
+def generate_lionseye_csv(input_file: str, output_file: str):
+    """Generate Lion's Eye CSV from ShipStation export for inventory updates."""
+    lionseye_rows = []
+
+    with open(input_file, "r", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            card_name = row.get("Card Name", "")
+            if not card_name:
+                continue
+
+            set_code = row.get("Set Code", "").lower()
+            collector_number = row.get("Collector #", "")
+            language = row.get("Language", "English")
+            finish = row.get("Finish", "")
+            quantity_str = row.get("Quantity", "1")
+
+            try:
+                quantity = int(quantity_str)
+            except (ValueError, TypeError):
+                quantity = 1
+
+            # Convert language to language code
+            language_code = LANGUAGE_MAPPING.get(language, "en")
+
+            # Determine foil vs non-foil
+            finish_lower = finish.lower()
+            if "non-foil" in finish_lower or "nonfoil" in finish_lower:
+                num_nonfoil = -quantity  # Negative for removal
+                num_foil = 0
+            elif "foil" in finish_lower or "etched" in finish_lower:
+                num_nonfoil = 0
+                num_foil = -quantity  # Negative for removal
+            else:
+                # Default to non-foil if unclear
+                num_nonfoil = -quantity
+                num_foil = 0
+
+            # Fetch Scryfall ID
+            print(f"Fetching Scryfall ID for {card_name} ({set_code})...")
+            _, _, _, scryfall_id = get_card_data_from_scryfall(
+                card_name, set_code, collector_number
+            )
+
+            if not scryfall_id:
+                print(f"Warning: Could not find Scryfall ID for {card_name} ({set_code})")
+                scryfall_id = ""
+
+            lionseye_rows.append(
+                {
+                    "Name": card_name,
+                    "Set Code": set_code,
+                    "Collector Number": collector_number,
+                    "Language Code": language_code,
+                    "Number of Non-foil": num_nonfoil,
+                    "Number of Foil": num_foil,
+                    "Favorite": "FALSE",
+                    "Scryfall ID": scryfall_id,
+                }
+            )
+
+            time.sleep(IMAGE_DOWNLOAD_DELAY)
+
+    # Write to CSV
+    with open(output_file, "w", newline="", encoding="utf-8") as file:
+        fieldnames = [
+            "Name",
+            "Set Code",
+            "Collector Number",
+            "Language Code",
+            "Number of Non-foil",
+            "Number of Foil",
+            "Favorite",
+            "Scryfall ID",
+        ]
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(lionseye_rows)
+
+
 def get_card_highlight_classes(card: Card) -> str:
     classes = []
     try:
@@ -665,41 +758,159 @@ def render_card_html(card: Card) -> str:
     return f"""\n                <div class="{card_classes}">\n                    <input type="checkbox" class="card-checkbox"\n                           id="{safe_id}">\n                    <div class="found-indicator">FOUND</div>\n                    {image_html}\n                    <div class="card-info">\n                        <h4 class="card-name">{card.name}</h4>\n                        <div class="card-details">\n                            <strong>Set:</strong> {card.set_name}\n                            ({card.set_code})<br>\n                            <strong>Collector #:</strong>\n                            {card.collector_number}<br>\n                            <strong>Quantity:</strong> {card.quantity}<br>\n                            <strong>Condition:</strong> {card.condition}<br>\n                            <strong>Rarity:</strong> {card.rarity}<br>\n                            <strong>Finish:</strong> {card.finish}\n                        </div>\n                        <div class="pricing-info">\n                            <strong>Unit Price:</strong>\n                            ${(card.price if card.price else 'N/A')}\n                        </div>\n                    </div>\n                </div>\n"""
 
 
-def render_location_section(location: str, cards: List[Card]) -> str:
-    location_section = f'\n        <div class="location-section">\n            <h2 class="location-header">{location}</h2>\n            <div class="location-content">\n                <div class="cards-grid">\n'
-    for card in cards:
-        location_section += render_card_html(card)
-    location_section += "\n                </div>\n            </div>\n        </div>\n"
+def get_group_display_value(card: Card, sort_field: str) -> str:
+    """Get the display value for grouping based on the sort field."""
+    if sort_field == "location":
+        return card.location
+    elif sort_field == "set":
+        return f"{card.set_name} ({card.set_code})"
+    elif sort_field == "name":
+        return card.name[0].upper() if card.name else "?"
+    elif sort_field == "condition":
+        return card.condition
+    elif sort_field == "rarity":
+        return card.rarity.capitalize()
+    elif sort_field == "price":
+        price = parse_price(card.price)
+        if price == 0:
+            return "N/A"
+        elif price < 1:
+            return "Under $1"
+        elif price < 5:
+            return "$1 - $5"
+        elif price < 10:
+            return "$5 - $10"
+        elif price < 25:
+            return "$10 - $25"
+        elif price < 50:
+            return "$25 - $50"
+        else:
+            return "$50+"
+    elif sort_field == "card_type":
+        type_line = card.card_type.lower() if card.card_type else ""
+        if not type_line:
+            return "Unknown"
+        # Extract primary type (before "—")
+        primary_type = type_line.split("—")[0].strip()
+        # Get the main card type
+        if "creature" in primary_type:
+            return "Creature"
+        elif "planeswalker" in primary_type:
+            return "Planeswalker"
+        elif "instant" in primary_type:
+            return "Instant"
+        elif "sorcery" in primary_type:
+            return "Sorcery"
+        elif "enchantment" in primary_type:
+            return "Enchantment"
+        elif "artifact" in primary_type:
+            return "Artifact"
+        elif "land" in primary_type:
+            return "Land"
+        elif "battle" in primary_type:
+            return "Battle"
+        else:
+            return primary_type.capitalize() if primary_type else "Unknown"
+    elif sort_field == "color":
+        colors = card.colors if card.colors else ""
+        if not colors:
+            return "Colorless"
+        elif len(colors) == 1:
+            color_names = {
+                "W": "White",
+                "U": "Blue",
+                "B": "Black",
+                "R": "Red",
+                "G": "Green"
+            }
+            return color_names.get(colors, colors)
+        else:
+            return "Multicolor"
+    return "Unknown"
+
+
+def render_subgroup_section(subgroup_name: str, cards: List[Card]) -> str:
+    """Render a sub-group within a primary group."""
+    # Sort cards alphabetically by name within this subgroup
+    sorted_cards = sorted(cards, key=lambda x: x.name.lower())
+
+    subgroup_html = f'\n                <div class="subgroup-section">\n                    <h3 class="subgroup-header">{subgroup_name}</h3>\n                    <div class="cards-grid">\n'
+    for card in sorted_cards:
+        subgroup_html += render_card_html(card)
+    subgroup_html += "\n                    </div>\n                </div>\n"
+    return subgroup_html
+
+
+def render_location_section(location: str, cards: List[Card], secondary_sort: Optional[str] = None) -> str:
+    """Render a primary group section, optionally with sub-groups."""
+    location_section = f'\n        <div class="location-section">\n            <h2 class="location-header">{location}</h2>\n            <div class="location-content">\n'
+
+    # If secondary sort is specified, create sub-groups
+    if secondary_sort:
+        subgrouped_cards: Dict[str, List[Card]] = defaultdict(list)
+        for card in cards:
+            subgroup_key = get_group_display_value(card, secondary_sort)
+            subgrouped_cards[subgroup_key].append(card)
+
+        # Preserve order of sub-groups
+        subgroup_order = []
+        seen_subgroups = set()
+        for card in cards:
+            subgroup = get_group_display_value(card, secondary_sort)
+            if subgroup not in seen_subgroups:
+                subgroup_order.append(subgroup)
+                seen_subgroups.add(subgroup)
+
+        # Render each sub-group
+        for subgroup in subgroup_order:
+            subgroup_cards = subgrouped_cards[subgroup]
+            location_section += render_subgroup_section(subgroup, subgroup_cards)
+    else:
+        # No sub-grouping, just render cards directly (sorted alphabetically by name)
+        sorted_cards = sorted(cards, key=lambda x: x.name.lower())
+        location_section += '\n                <div class="cards-grid">\n'
+        for card in sorted_cards:
+            location_section += render_card_html(card)
+        location_section += "\n                </div>\n"
+
+    location_section += "\n            </div>\n        </div>\n"
     return location_section
 
 
 def generate_html_report(
-    cards: List[Card], output_file: str, sort_by: str = "location", order: str = "asc"
+    cards: List[Card],
+    output_file: str,
+    sort_by: str = "location",
+    order: str = "asc",
+    secondary_sort: Optional[str] = None
 ):
     from datetime import datetime
 
     template = load_html_template()
     if template is None:
         return
-    if sort_by == "location":
-        grouped_cards: Dict[str, List[Card]] = defaultdict(list)
-        for card in cards:
-            grouped_cards[card.location].append(card)
-        location_order = []
-        seen_locations = set()
-        for card in cards:
-            location = card.location
-            if location not in seen_locations:
-                location_order.append(location)
-                seen_locations.add(location)
-    else:
-        grouped_cards = {"All Cards": cards}
-        location_order = ["All Cards"]
+
+    # Group cards by the primary sort field
+    grouped_cards: Dict[str, List[Card]] = defaultdict(list)
+    for card in cards:
+        group_key = get_group_display_value(card, sort_by)
+        grouped_cards[group_key].append(card)
+
+    # Preserve the order of groups as they appear in the sorted card list
+    group_order = []
+    seen_groups = set()
+    for card in cards:
+        group = get_group_display_value(card, sort_by)
+        if group not in seen_groups:
+            group_order.append(group)
+            seen_groups.add(group)
+
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     location_sections_html = ""
-    for location in location_order:
-        cards_in_location = grouped_cards[location]
-        location_sections_html += render_location_section(location, cards_in_location)
+    for group in group_order:
+        cards_in_group = grouped_cards[group]
+        location_sections_html += render_location_section(group, cards_in_group, secondary_sort)
+
     total_cards = sum((parse_quantity(card.quantity) for card in cards))
     unique_cards = len(cards)
     unique_locations = len(set((card.location for card in cards)))
@@ -729,6 +940,13 @@ def main():
         CSV_OUTPUT_DIR, f"card_inventory_report_{timestamp}.csv"
     )
     html_output_file = os.path.join(HTML_OUTPUT_DIR, f"manapoolshoot_{timestamp}.html")
+
+    # Only create Lion's Eye directory and file if flag is set
+    if args.lionseye_export:
+        os.makedirs(LIONSEYE_OUTPUT_DIR, exist_ok=True)
+        lionseye_output_file = os.path.join(
+            LIONSEYE_OUTPUT_DIR, f"lionseye_export_{timestamp}.csv"
+        )
     print("Looking for ShipStation files...")
     shipstation_file = find_most_recent_shipstation_file()
     if not shipstation_file:
@@ -767,17 +985,28 @@ def main():
     generate_csv_report(cards, csv_output_file)
     print(f"CSV report generated: {csv_output_file}")
     print("Generating HTML report...")
-    generate_html_report(cards, html_output_file, args.sort_by, args.order)
+    generate_html_report(cards, html_output_file, args.sort_by, args.order, args.secondary_sort)
     print(f"HTML report generated: {html_output_file}")
+
+    # Generate Lion's Eye export if flag is set
+    if args.lionseye_export:
+        print("\nGenerating Lion's Eye CSV export...")
+        generate_lionseye_csv(shipstation_file, lionseye_output_file)
+        print(f"Lion's Eye CSV generated: {lionseye_output_file}")
+
     if args.clean_reports:
         print("\nCleaning up old reports...")
         cleanup_old_reports()
     print("\nReports generated successfully!")
     print(f"- CSV: {csv_output_file}")
     print(f"- HTML: {html_output_file}")
+    if args.lionseye_export:
+        print(f"- Lion's Eye CSV: {lionseye_output_file}")
     print(f"- Images cached in: {CACHE_DIR}/")
     print(f"- CSV reports directory: {CSV_OUTPUT_DIR}/")
     print(f"- HTML reports directory: {HTML_OUTPUT_DIR}/")
+    if args.lionseye_export:
+        print(f"- Lion's Eye exports directory: {LIONSEYE_OUTPUT_DIR}/")
     if auto_open:
         print(f"\nOpening HTML report in {browser}...")
         open_html_in_browser(html_output_file, browser, auto_open)
